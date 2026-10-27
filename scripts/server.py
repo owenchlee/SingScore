@@ -21,6 +21,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import traceback
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -199,6 +200,7 @@ def _run_job(job: Job) -> None:
             job.progress = 1.0
             job.slug = slug
     except Exception as exc:  # noqa: BLE001 - reported to the client, not swallowed
+        traceback.print_exc()  # the client only gets str(exc); keep the full cause in the server log
         with job.lock:
             job.status = "error"
             job.error = str(exc)

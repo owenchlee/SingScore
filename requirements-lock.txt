@@ -107,4 +107,4 @@ watchfiles==1.2.0
 websockets==16.1.1
 Werkzeug==3.1.8
 wrapt==1.14.2
-yt-dlp==2026.7.4
+yt-dlp==2026.10.26

@@ -16,11 +16,10 @@ _BASE_YDL_OPTS = {
     "quiet": True,
     "no_warnings": True,
     "noplaylist": True,
-    # YouTube's default "web" client needs a PO token to hand out format URLs
-    # and 403s without one; these clients don't, so try them first and fall
-    # back across all of them rather than getting stuck retrying whichever
-    # one happened to be blocked for this IP at the moment.
-    "extractor_args": {"youtube": {"player_client": ["android_vr", "tv", "ios", "web"]}},
+    # No ``player_client`` override: yt-dlp's own default client selection is
+    # kept current with YouTube's changes. A hardcoded list here went stale
+    # and blocked the one client that still worked (every listed client failed
+    # while the default succeeded), so leave it to yt-dlp.
 }
 
 # Transient YouTube-side failures (rate limiting, a momentarily-blocked
