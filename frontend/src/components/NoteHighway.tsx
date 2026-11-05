@@ -12,6 +12,7 @@ import {
   timeToX,
 } from '../game/coords'
 import { isNoteHit, type NoteAccuracy } from '../game/scoring'
+import { createSmoothClock } from '../game/smoothClock'
 import type { LiveIndicatorState } from '../hooks/useLivePitchIndicator'
 
 const CANVAS_WIDTH_FALLBACK = 900
@@ -91,6 +92,9 @@ function NoteHighway({ audioRef, notes, indicatorRef, accuraciesRef, latencySeco
     if (!canvas || !ctx || !container) return
 
     const pitchRange = getPitchRange(notes)
+    // Visual-only: the raw audio clock updates in coarse steps, which makes scrolling bars stutter
+    // (see smoothClock.ts). Scoring and the pitch pipeline keep reading the real clock.
+    const smoothClock = createSmoothClock()
     const noteIndices = new Map(notes.map((note, index) => [note, index]))
 
     let colors = readNoteColors(canvas)
@@ -145,7 +149,11 @@ function NoteHighway({ audioRef, notes, indicatorRef, accuraciesRef, latencySeco
       // the playhead by the time that judgment lands reads as "the highway moved too early." Holding
       // the highway back by that same latency (rather than the raw audio position) keeps whatever
       // bar sits at the playhead in sync with what's actually being judged right now.
-      const currentTime = (audioRef.current?.currentTime ?? 0) - (latencySecondsRef?.current ?? 0)
+      const audio = audioRef.current
+      const audioTime = audio
+        ? smoothClock(audio.currentTime, timestamp, !audio.paused && !audio.ended, audio.playbackRate)
+        : 0
+      const currentTime = audioTime - (latencySecondsRef?.current ?? 0)
       const futureWindowSeconds = (cssWidth - PLAYHEAD_X) / DEFAULT_PX_PER_SECOND
 
       ctx.clearRect(0, 0, cssWidth, cssHeight)
