@@ -510,6 +510,39 @@ def _has_energy_at_lower_pitch(audio: np.ndarray, sample_rate: int, note: dict, 
     return peak(lower_midi) >= peak(note["pitch_midi"])
 
 
+_SPLIT_MIN_NOTE_S = 0.5
+_SPLIT_EDGE_S = 0.15
+_SPLIT_FRAME_S = 0.01
+# A dip this far below the note's median level is a re-articulation, not vibrato.
+_SPLIT_DIP_RATIO = 0.3
+
+
+def _split_at_amplitude_dips(notes: list[dict], audio: np.ndarray, sample_rate: int) -> list[dict]:
+    """Split a long note where its loudness drops to near silence mid-note (two repeated same-pitch
+    notes sung legato get merged into one by the pitch model, but the singer re-articulates)."""
+    out: list[dict] = []
+    for note in notes:
+        pending = [note]
+        while pending:
+            n = pending.pop(0)
+            lo, hi = n["onset"] + _SPLIT_EDGE_S, n["offset"] - _SPLIT_EDGE_S
+            if n["duration"] < _SPLIT_MIN_NOTE_S or hi <= lo:
+                out.append(n)
+                continue
+            starts = np.arange(n["onset"], n["offset"], _SPLIT_FRAME_S)
+            rms = np.array([_note_rms(audio, sample_rate, s, s + _SPLIT_FRAME_S) for s in starts])
+            inner = (starts >= lo) & (starts < hi)
+            if not inner.any() or rms[inner].min() >= _SPLIT_DIP_RATIO * np.median(rms):
+                out.append(n)
+                continue
+            cut = round(float(starts[inner][np.argmin(rms[inner])] + _SPLIT_FRAME_S / 2), 4)
+            first = dict(n, offset=cut, duration=round(cut - n["onset"], 4))
+            second = dict(n, onset=cut, duration=round(n["offset"] - cut, 4))
+            out.append(first)
+            pending.insert(0, second)
+    return out
+
+
 def _refine_with_pyin(notes: list[dict], audio: np.ndarray, sample_rate: int) -> list[dict]:
     """Correct each note's pitch and extend its offset using an independent pYIN track, fill in any
     real-singing gap basic-pitch missed entirely, then drop any note left with no independent pitch
@@ -634,6 +667,7 @@ def extract_melody(vocal_stem_path: str | Path, output_dir: str | Path) -> Melod
     notes = _enforce_monophony(notes)
     notes = _collapse_octave_blips(notes)
     notes = _merge_same_pitch_fragments(_refine_with_pyin(notes, audio, sample_rate))
+    notes = _split_at_amplitude_dips(notes, audio, sample_rate)
     # Noise leaves short stray notes that survive merging; real sung notes are longer.
     notes = [n for n in notes if n["duration"] >= _FINAL_MIN_NOTE_S]
 
