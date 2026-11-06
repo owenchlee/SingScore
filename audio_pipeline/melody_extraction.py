@@ -483,6 +483,23 @@ def _merge_same_pitch_fragments(notes: list[dict]) -> list[dict]:
     return merged
 
 
+def _has_energy_at_lower_pitch(audio: np.ndarray, sample_rate: int, note: dict, lower_midi: int) -> bool:
+    """True if the note's window has at least as much spectral energy near ``lower_midi`` as near
+    the note's own (higher) pitch, i.e. the lower pitch is a real fundamental, not just bleed."""
+    segment = audio[max(0, int(note["onset"] * sample_rate)) : int(note["offset"] * sample_rate)]
+    if len(segment) == 0:
+        return False
+    spectrum = np.abs(np.fft.rfft(segment * np.hanning(len(segment))))
+    freqs = np.fft.rfftfreq(len(segment), 1 / sample_rate)
+
+    def peak(midi_pitch: float) -> float:
+        hz = _midi_to_hz(midi_pitch)
+        band = (freqs >= hz * 0.97) & (freqs <= hz * 1.03)
+        return float(spectrum[band].max()) if band.any() else 0.0
+
+    return peak(lower_midi) >= peak(note["pitch_midi"])
+
+
 def _refine_with_pyin(notes: list[dict], audio: np.ndarray, sample_rate: int) -> list[dict]:
     """Correct each note's pitch and extend its offset using an independent pYIN track, fill in any
     real-singing gap basic-pitch missed entirely, then drop any note left with no independent pitch
@@ -509,7 +526,12 @@ def _refine_with_pyin(notes: list[dict], audio: np.ndarray, sample_rate: int) ->
         voiced_fraction = len(voiced) / total
         corrected_midi = int(round(float(np.median(voiced))))
         disagreement = float(_pitch_class_distance(corrected_midi, note["pitch_midi"]))
-        if _should_correct_note_pitch(voiced_fraction, disagreement):
+        # Steady low backing-track bleed drags pYIN's median an octave below a sung pitch; only
+        # accept a downward octave move if the note's own window has real energy at the lower pitch.
+        bleed_octave = corrected_midi - note["pitch_midi"] <= -11 and not _has_energy_at_lower_pitch(
+            audio, sample_rate, note, corrected_midi
+        )
+        if _should_correct_note_pitch(voiced_fraction, disagreement) and not bleed_octave:
             note["pitch_midi"] = corrected_midi
             note["pitch_hz"] = round(_midi_to_hz(corrected_midi), 2)
 
