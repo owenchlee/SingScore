@@ -538,8 +538,12 @@ def _split_at_amplitude_dips(notes: list[dict], audio: np.ndarray, sample_rate: 
             cut = round(float(starts[inner][np.argmin(rms[inner])] + _SPLIT_FRAME_S / 2), 4)
             first = dict(n, offset=cut, duration=round(cut - n["onset"], 4))
             second = dict(n, onset=cut, duration=round(n["offset"] - cut, 4))
-            out.append(first)
-            pending.insert(0, second)
+            # A half that is mostly near-silence is an over-extended tail into a rest, not a note.
+            floor = _SPLIT_DIP_RATIO * np.median(rms)
+            if np.median(rms[starts < cut]) >= floor:
+                out.append(first)
+            if np.median(rms[starts >= cut]) >= floor:
+                pending.insert(0, second)
     return out
 
 
