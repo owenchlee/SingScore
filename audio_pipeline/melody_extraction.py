@@ -270,6 +270,7 @@ _GAP_REPAIR_PITCH_TOLERANCE_SEMITONES = _OFFSET_EXTEND_MATCH_SEMITONES
 # A synthesized note has no basic-pitch confidence score behind it at all -- a neutral, middling
 # velocity rather than a fitted value.
 _GAP_REPAIR_VELOCITY = 0.5
+_GAP_REPAIR_MIN_RELATIVE_RMS = 0.5
 
 
 def _pyin_track(audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, np.ndarray]:
@@ -332,6 +333,14 @@ def _repair_melody_gaps(
     boundaries += [(a["offset"], b["onset"]) for a, b in zip(notes, notes[1:])]
     boundaries.append((notes[-1]["offset"], audio_duration))
 
+    # Backing-track bleed is voiced and above the silence gate but much quieter than the singer, so
+    # a synthesized note must also be at least a fraction as loud as the typical detected note.
+    gate = max(
+        _SILENCE_RMS_GATE,
+        _GAP_REPAIR_MIN_RELATIVE_RMS
+        * float(np.median([_note_rms(audio, sample_rate, n["onset"], n["offset"]) for n in notes])),
+    )
+
     new_notes: list[dict] = []
     for gap_start, gap_end in boundaries:
         if gap_end - gap_start < _GAP_REPAIR_MIN_GAP_SECONDS:
@@ -350,7 +359,7 @@ def _repair_melody_gaps(
                 run_start_time is not None
                 and run_values
                 and run_end_time - run_start_time >= _GAP_REPAIR_MIN_RUN_SECONDS
-                and _note_rms(audio, sample_rate, run_start_time, run_end_time) >= _SILENCE_RMS_GATE
+                and _note_rms(audio, sample_rate, run_start_time, run_end_time) >= gate
             ):
                 pitch_midi = int(round(float(np.median(run_values))))
                 new_notes.append(
