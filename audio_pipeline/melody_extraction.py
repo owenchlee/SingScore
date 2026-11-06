@@ -441,6 +441,8 @@ def _drop_unconfirmed_pitch_spikes(
 # Noisy audio fragments one held note into several same-pitch pieces separated by tiny gaps.
 # Fragments of the same pitch within this gap are treated as one note.
 _MERGE_MAX_GAP_S = 0.1
+# Applied after merging: anything shorter is treated as a spurious fragment.
+_FINAL_MIN_NOTE_S = 0.2
 
 
 def _merge_same_pitch_fragments(notes: list[dict]) -> list[dict]:
@@ -580,6 +582,8 @@ def extract_melody(vocal_stem_path: str | Path, output_dir: str | Path) -> Melod
     notes = _enforce_monophony(notes)
     notes = _collapse_octave_blips(notes)
     notes = _merge_same_pitch_fragments(_refine_with_pyin(notes, audio, sample_rate))
+    # Noise leaves short stray notes that survive merging; real sung notes are longer.
+    notes = [n for n in notes if n["duration"] >= _FINAL_MIN_NOTE_S]
 
     midi_data = pretty_midi.PrettyMIDI()
     instrument = pretty_midi.Instrument(program=0)
