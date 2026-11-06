@@ -98,6 +98,10 @@ _MIN_TRIMMED_DURATION_S = 0.05
 _MAX_CONTAINER_NOTE_S = 3.0
 
 
+# A much weaker note swallowing a clearly more confident one is bleed, not the real note.
+_CONTAINER_VELOCITY_MARGIN = 0.3
+
+
 def _enforce_monophony(notes: list[dict]) -> list[dict]:
     ordered = sorted((dict(note) for note in notes), key=lambda n: n["onset"])
     kept: list[dict] = []
@@ -107,7 +111,13 @@ def _enforce_monophony(notes: list[dict]) -> list[dict]:
             if note["onset"] >= last["offset"]:
                 break
             if note["offset"] <= last["offset"]:
-                if last["duration"] > _MAX_CONTAINER_NOTE_S:
+                if (
+                    last["duration"] > _MAX_CONTAINER_NOTE_S
+                    or (
+                        note["velocity"] - last["velocity"] >= _CONTAINER_VELOCITY_MARGIN
+                        and (note["pitch_midi"] - last["pitch_midi"]) % 12 != 0  # octaves are harmonic artifacts
+                    )
+                ):
                     # An implausibly long note (steady backing-track bleed) is not a harmonic
                     # artifact of a real held note: cut it at the contained note's onset instead.
                     last["offset"] = note["onset"]
