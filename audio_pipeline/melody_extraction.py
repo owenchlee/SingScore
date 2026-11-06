@@ -438,6 +438,29 @@ def _drop_unconfirmed_pitch_spikes(
     return kept
 
 
+# Noisy audio fragments one held note into several same-pitch pieces separated by tiny gaps.
+# Fragments of the same pitch within this gap are treated as one note.
+_MERGE_MAX_GAP_S = 0.1
+
+
+def _merge_same_pitch_fragments(notes: list[dict]) -> list[dict]:
+    """Merge consecutive same-pitch notes separated by at most `_MERGE_MAX_GAP_S`."""
+    merged: list[dict] = []
+    for note in notes:
+        last = merged[-1] if merged else None
+        if (
+            last is not None
+            and last["pitch_midi"] == note["pitch_midi"]
+            and note["onset"] - last["offset"] <= _MERGE_MAX_GAP_S
+        ):
+            last["offset"] = max(last["offset"], note["offset"])
+            last["duration"] = round(last["offset"] - last["onset"], 4)
+            last["velocity"] = max(last["velocity"], note["velocity"])
+        else:
+            merged.append(dict(note))
+    return merged
+
+
 def _refine_with_pyin(notes: list[dict], audio: np.ndarray, sample_rate: int) -> list[dict]:
     """Correct each note's pitch and extend its offset using an independent pYIN track, fill in any
     real-singing gap basic-pitch missed entirely, then drop any note left with no independent pitch
@@ -556,7 +579,7 @@ def extract_melody(vocal_stem_path: str | Path, output_dir: str | Path) -> Melod
 
     notes = _enforce_monophony(notes)
     notes = _collapse_octave_blips(notes)
-    notes = _refine_with_pyin(notes, audio, sample_rate)
+    notes = _merge_same_pitch_fragments(_refine_with_pyin(notes, audio, sample_rate))
 
     midi_data = pretty_midi.PrettyMIDI()
     instrument = pretty_midi.Instrument(program=0)
