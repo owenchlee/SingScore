@@ -94,6 +94,8 @@ def _note_rms(audio: np.ndarray, sample_rate: int, start_s: float, end_s: float)
 #     trim the other's boundary back to remove the overlap, dropping it
 #     entirely if trimming would leave a sliver under _MIN_TRIMMED_DURATION_S.
 _MIN_TRIMMED_DURATION_S = 0.05
+# A sung note longer than this swallowing later notes is far more likely bleed than a real hold.
+_MAX_CONTAINER_NOTE_S = 3.0
 
 
 def _enforce_monophony(notes: list[dict]) -> list[dict]:
@@ -105,6 +107,15 @@ def _enforce_monophony(notes: list[dict]) -> list[dict]:
             if note["onset"] >= last["offset"]:
                 break
             if note["offset"] <= last["offset"]:
+                if last["duration"] > _MAX_CONTAINER_NOTE_S:
+                    # An implausibly long note (steady backing-track bleed) is not a harmonic
+                    # artifact of a real held note: cut it at the contained note's onset instead.
+                    last["offset"] = note["onset"]
+                    last["duration"] = round(last["offset"] - last["onset"], 4)
+                    if last["duration"] < _MIN_TRIMMED_DURATION_S:
+                        kept.pop()
+                        continue
+                    break
                 note = None
                 break
             if note["velocity"] > last["velocity"]:
