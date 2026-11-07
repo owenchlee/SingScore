@@ -116,11 +116,15 @@ def _estimate_start_offset(
     onset_vocal = librosa.onset.onset_strength(y=y_vocal, sr=sr, hop_length=hop_length)
     onset_instrumental = librosa.onset.onset_strength(y=y_instrumental, sr=sr, hop_length=hop_length)
 
-    if not np.any(onset_vocal) or not np.any(onset_instrumental):
+    if np.std(onset_vocal) == 0 or np.std(onset_instrumental) == 0:
         return None
+    # Zero-mean, unit-variance envelopes so the score curve swings around zero and a real
+    # alignment shows up as a peak instead of riding on the envelopes' constant offset.
+    onset_vocal = (onset_vocal - onset_vocal.mean()) / onset_vocal.std()
+    onset_instrumental = (onset_instrumental - onset_instrumental.mean()) / onset_instrumental.std()
 
     max_lag_frames = max(1, int(round(max_offset_seconds * sr / hop_length)))
-    lags = range(-max_lag_frames, max_lag_frames + 1)
+    lags = np.arange(-max_lag_frames, max_lag_frames + 1)
     scores = np.empty(len(lags))
 
     for i, lag in enumerate(lags):
@@ -132,17 +136,27 @@ def _estimate_start_offset(
         else:
             a, b = onset_vocal, onset_instrumental[-lag:]
         n = min(len(a), len(b))
-        scores[i] = float(np.dot(a[:n], b[:n])) if n > 0 else 0.0
+        scores[i] = float(np.dot(a[:n], b[:n])) / n if n > 0 else 0.0
 
     best_index = int(np.argmax(scores))
     peak = scores[best_index]
-    mean_abs = float(np.mean(np.abs(scores)))
-    # A real, sharp lag stands well above the rest of the window; a near-silent or unrelated take
-    # produces a flat, noisy score curve with no such standout -- this threshold is the difference.
-    if peak <= 0 or mean_abs == 0 or peak < 3 * mean_abs:
+    overlap = min(len(onset_vocal), len(onset_instrumental)) - abs(int(lags[best_index]))
+    # Significance gate: for unrelated z-scored envelopes the normalised correlation is ~N(0, 1/n),
+    # so peak * sqrt(n) is a z-score. Unrelated or near-silent takes stay around 3 even at the
+    # best of the window; a real rhythmic match scores well above 5.
+    if peak <= 0 or overlap <= 0 or peak * np.sqrt(overlap) < 5:
         return None
 
-    return float(list(lags)[best_index] * hop_length / sr)
+    # Rhythmic music makes the curve repeat every beat, so several lags score almost the same.
+    # Rhythm alone can't tell them apart; among those near-ties take the one closest to the
+    # typical hardware latency prior rather than whichever won by noise.
+    from scipy.signal import find_peaks
+
+    peaks, _ = find_peaks(scores)
+    candidates = [p for p in peaks if scores[p] >= 0.8 * peak] or [best_index]
+    lag_seconds = lags * hop_length / sr
+    chosen = min(candidates, key=lambda p: abs(lag_seconds[p] - _RECORDING_OFFSET_SECONDS))
+    return float(lag_seconds[chosen])
 
 
 def _bleed_offset(y_vocal, y_instrumental, sr: int, max_offset_seconds: float) -> float | None:
