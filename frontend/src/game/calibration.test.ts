@@ -146,3 +146,13 @@ describe('calibration offset storage', () => {
     expect(loadCalibrationOffsetSeconds()).toBe(0)
   })
 })
+
+describe('computeCalibrationResult alias rejection', () => {
+  it('prefers the tight true-latency cluster over a one-beat alias that borrows a stray tap', () => {
+    // Late start (joins at beat 3), ~0.53 s Bluetooth-class latency, one stray tap before beat 1.
+    const beats = Array.from({ length: 8 }, (_, i) => 10 + i * 0.6)
+    const taps = [-0.163, 1.785, 2.371, 2.934, 3.576, 4.112, 4.78].map((t) => 10 + t)
+    const result = computeCalibrationResult(beats, taps)
+    expect(result?.offsetSeconds).toBeCloseTo(0.534, 1)
+  })
+})
