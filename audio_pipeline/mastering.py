@@ -108,6 +108,10 @@ def _estimate_start_offset(
     y_vocal, sr = librosa.load(str(vocal_path), sr=None, mono=True)
     y_instrumental, _ = librosa.load(str(instrumental_path), sr=sr, mono=True)
 
+    bleed_offset = _bleed_offset(y_vocal, y_instrumental, sr, max_offset_seconds)
+    if bleed_offset is not None:
+        return bleed_offset
+
     hop_length = 512
     onset_vocal = librosa.onset.onset_strength(y=y_vocal, sr=sr, hop_length=hop_length)
     onset_instrumental = librosa.onset.onset_strength(y=y_instrumental, sr=sr, hop_length=hop_length)
@@ -139,6 +143,34 @@ def _estimate_start_offset(
         return None
 
     return float(list(lags)[best_index] * hop_length / sr)
+
+
+def _bleed_offset(y_vocal, y_instrumental, sr: int, max_offset_seconds: float) -> float | None:
+    """Sample-accurate lag of the instrumental's speaker bleed inside the mic track, via
+    PHAT-weighted cross-correlation. Bleed travels the same output+input latency path as the voice,
+    so its lag is the take's offset. Returns ``None`` when there is no clear bleed peak (e.g. a
+    headphone take), leaving the rhythm-only path to decide."""
+    import numpy as np
+
+    n = min(len(y_vocal), len(y_instrumental))
+    if n == 0:
+        return None
+    max_lag = min(n - 1, int(round(max_offset_seconds * sr)))
+    size = 1 << int(np.ceil(np.log2(n + max_lag)))
+    cross = np.fft.rfft(y_vocal[:n], size) * np.conj(np.fft.rfft(y_instrumental[:n], size))
+    magnitude = np.abs(cross)
+    # Regularised PHAT: whiten so the direct-path peak is sharp, but don't amplify empty bins.
+    cross /= magnitude + 1e-3 * (np.max(magnitude) + 1e-12)
+    corr = np.fft.irfft(cross, size)
+    # Index k holds lag k (vocal lags); negative lags wrap to the end.
+    window = np.concatenate([corr[size - max_lag:], corr[: max_lag + 1]])
+    best = int(np.argmax(window))
+    peak = window[best]
+    guard = max(1, int(0.002 * sr))
+    rest = np.delete(window, slice(max(0, best - guard), best + guard + 1))
+    if peak <= 0 or rest.size == 0 or peak < 8 * np.std(rest):
+        return None
+    return float((best - max_lag) / sr)
 
 
 _HIGHPASS_HZ = 90
