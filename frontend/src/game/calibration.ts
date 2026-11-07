@@ -67,6 +67,9 @@ const SUPPORT_WINDOW_SECONDS = 0.1
 // Final pairing window around (beat + chosen offset): the usual match window, now re-centred.
 const REFINE_WINDOW_SECONDS = MAX_MATCH_WINDOW_SECONDS
 
+// Matched offsets farther than this from the median are stray or double taps, not clap jitter.
+const INLIER_WINDOW_SECONDS = SUPPORT_WINDOW_SECONDS
+
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
@@ -126,6 +129,9 @@ export function computeCalibrationResult(
     if (offsets.length < MIN_MATCHED_BEATS) return null
     offsetSeconds = median(offsets)
   }
+  // Clap jitter is roughly Gaussian, so the mean of the inliers is a tighter estimate than the median.
+  const inliers = offsets.filter((o) => Math.abs(o - offsetSeconds) <= INLIER_WINDOW_SECONDS)
+  if (inliers.length > 0) offsetSeconds = inliers.reduce((sum, o) => sum + o, 0) / inliers.length
 
   return { offsetSeconds, matchedBeats: offsets.length, totalBeats: beatTimes.length }
 }
