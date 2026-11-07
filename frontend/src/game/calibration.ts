@@ -55,6 +55,11 @@ export interface CalibrationResult {
 const MIN_LATENCY_SECONDS = -0.2
 const MAX_LATENCY_SECONDS = 0.8
 
+// Last-resort tie-break target: the middle of the common real-world span (about -0.1 s anticipation to
+// 0.5 s Bluetooth). When a late start or missed last beat makes two one-beat-apart offsets fit equally
+// well, the one nearer this wins.
+const TYPICAL_LATENCY_SECONDS = 0.2
+
 // A tap within this of (beat + candidate offset) supports that candidate -- wide enough for human
 // clap jitter, narrow enough not to bridge to a neighbouring beat.
 const SUPPORT_WINDOW_SECONDS = 0.1
@@ -71,8 +76,9 @@ function median(values: number[]): number {
 /** Estimates one latency for the whole run instead of pairing each beat with its nearest tap: once
  * the latency exceeds half the beat spacing, nearest-tap pairing locks onto the NEXT beat and comes
  * out a full beat wrong. Every (tap - beat) difference in the plausible range is a candidate; the one
- * the most beats agree with wins (ties go to the smaller offset, since a late start makes the
- * one-beat-later alias fit equally well). The offsets matched around it are reduced to their median --
+ * the most beats agree with wins. Ties go first to the candidate that explains more taps (the
+ * one-beat-earlier alias leaves the last beat's tap unexplained), then to the one nearer
+ * `TYPICAL_LATENCY_SECONDS` (a late start or missed last beat can make one-beat aliases fit equally). The offsets matched around it are reduced to their median --
  * resistant to a single mistimed tap the same way `smoothMidi` resists a pitch outlier (see
  * `game/pitch.ts`). Returns null when fewer than `MIN_MATCHED_BEATS` beats matched. */
 export function computeCalibrationResult(
@@ -81,6 +87,7 @@ export function computeCalibrationResult(
 ): CalibrationResult | null {
   let bestOffset = Infinity
   let bestSupport = 0
+  let bestExplained = 0
   for (const beat of beatTimes) {
     for (const tap of tapTimes) {
       const candidate = tap - beat
@@ -88,8 +95,18 @@ export function computeCalibrationResult(
       const support = beatTimes.filter((b) =>
         tapTimes.some((t) => Math.abs(t - b - candidate) <= SUPPORT_WINDOW_SECONDS),
       ).length
-      if (support > bestSupport || (support === bestSupport && candidate < bestOffset)) {
+      const explained = tapTimes.filter((t) =>
+        beatTimes.some((b) => Math.abs(t - b - candidate) <= SUPPORT_WINDOW_SECONDS),
+      ).length
+      if (
+        support > bestSupport ||
+        (support === bestSupport &&
+          (explained > bestExplained || (explained === bestExplained &&
+              Math.abs(candidate - TYPICAL_LATENCY_SECONDS) <
+                Math.abs(bestOffset - TYPICAL_LATENCY_SECONDS))))
+      ) {
         bestSupport = support
+        bestExplained = explained
         bestOffset = candidate
       }
     }
