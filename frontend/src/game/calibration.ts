@@ -50,19 +50,65 @@ export interface CalibrationResult {
   totalBeats: number
 }
 
-/** Median of the matched per-beat offsets -- resistant to a single mistimed tap the same way
- * `smoothMidi` resists a single-frame pitch outlier (see `game/pitch.ts`). Returns null when fewer
- * than `MIN_MATCHED_BEATS` beats matched, too little data for a trustworthy calibration. */
+// Plausible range for the true latency: early (anticipating) clappers down to MIN, Bluetooth-class
+// output plus clap timing up to MAX. Only candidate offsets inside it are considered.
+const MIN_LATENCY_SECONDS = -0.2
+const MAX_LATENCY_SECONDS = 0.8
+
+// A tap within this of (beat + candidate offset) supports that candidate -- wide enough for human
+// clap jitter, narrow enough not to bridge to a neighbouring beat.
+const SUPPORT_WINDOW_SECONDS = 0.1
+
+// Final pairing window around (beat + chosen offset): the usual match window, now re-centred.
+const REFINE_WINDOW_SECONDS = MAX_MATCH_WINDOW_SECONDS
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+}
+
+/** Estimates one latency for the whole run instead of pairing each beat with its nearest tap: once
+ * the latency exceeds half the beat spacing, nearest-tap pairing locks onto the NEXT beat and comes
+ * out a full beat wrong. Every (tap - beat) difference in the plausible range is a candidate; the one
+ * the most beats agree with wins (ties go to the smaller offset, since a late start makes the
+ * one-beat-later alias fit equally well). The offsets matched around it are reduced to their median --
+ * resistant to a single mistimed tap the same way `smoothMidi` resists a pitch outlier (see
+ * `game/pitch.ts`). Returns null when fewer than `MIN_MATCHED_BEATS` beats matched. */
 export function computeCalibrationResult(
   beatTimes: number[],
   tapTimes: number[],
 ): CalibrationResult | null {
-  const offsets = pairBeatsToTaps(beatTimes, tapTimes)
-  if (offsets.length < MIN_MATCHED_BEATS) return null
+  let bestOffset = Infinity
+  let bestSupport = 0
+  for (const beat of beatTimes) {
+    for (const tap of tapTimes) {
+      const candidate = tap - beat
+      if (candidate < MIN_LATENCY_SECONDS || candidate > MAX_LATENCY_SECONDS) continue
+      const support = beatTimes.filter((b) =>
+        tapTimes.some((t) => Math.abs(t - b - candidate) <= SUPPORT_WINDOW_SECONDS),
+      ).length
+      if (support > bestSupport || (support === bestSupport && candidate < bestOffset)) {
+        bestSupport = support
+        bestOffset = candidate
+      }
+    }
+  }
+  if (bestSupport < MIN_MATCHED_BEATS) return null
 
-  const sorted = [...offsets].sort((a, b) => a - b)
-  const mid = Math.floor(sorted.length / 2)
-  const offsetSeconds = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+  let offsetSeconds = bestOffset
+  let offsets: number[] = []
+  // Two passes: the winning candidate may sit at the edge of its cluster; re-centre on the median.
+  for (let pass = 0; pass < 2; pass++) {
+    const center = offsetSeconds
+    offsets = pairBeatsToTaps(
+      beatTimes.map((b) => b + center),
+      tapTimes,
+      REFINE_WINDOW_SECONDS,
+    ).map((o) => o + center)
+    if (offsets.length < MIN_MATCHED_BEATS) return null
+    offsetSeconds = median(offsets)
+  }
 
   return { offsetSeconds, matchedBeats: offsets.length, totalBeats: beatTimes.length }
 }

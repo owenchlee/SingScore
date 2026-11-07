@@ -72,6 +72,15 @@ describe('computeCalibrationResult', () => {
     const result = computeCalibrationResult(beats, taps)
     expect(result!.offsetSeconds).toBeLessThan(0)
   })
+
+  it('measures a Bluetooth-class latency above half the beat spacing instead of locking onto the next beat', () => {
+    // useCalibration's real schedule: 8 clicks at 100 BPM (0.6 s apart).
+    const beats = Array.from({ length: 8 }, (_, i) => 10 + i * 0.6)
+    const taps = beats.map((b, i) => b + 0.45 + (i % 2 === 0 ? 0.02 : -0.02))
+    const result = computeCalibrationResult(beats, taps)
+    expect(result!.offsetSeconds).toBeCloseTo(0.45, 1)
+    expect(result!.matchedBeats).toBe(8)
+  })
 })
 
 describe('calibration offset storage', () => {
