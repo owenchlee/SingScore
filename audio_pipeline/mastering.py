@@ -156,7 +156,15 @@ def _estimate_start_offset(
     candidates = [p for p in peaks if scores[p] >= 0.8 * peak] or [best_index]
     lag_seconds = lags * hop_length / sr
     chosen = min(candidates, key=lambda p: abs(lag_seconds[p] - _RECORDING_OFFSET_SECONDS))
-    return float(lag_seconds[chosen])
+    offset = float(lag_seconds[chosen])
+    # Parabolic interpolation through the peak and its neighbours: sub-frame precision, since one
+    # onset frame is ~12 ms.
+    if 0 < chosen < len(scores) - 1:
+        left, mid, right = scores[chosen - 1], scores[chosen], scores[chosen + 1]
+        curvature = left - 2 * mid + right
+        if curvature < 0:
+            offset += 0.5 * (left - right) / curvature * hop_length / sr
+    return offset
 
 
 def _bleed_offset(y_vocal, y_instrumental, sr: int, max_offset_seconds: float) -> float | None:
