@@ -159,11 +159,14 @@ def _estimate_start_offset(
     offset = float(lag_seconds[chosen])
     # Parabolic interpolation through the peak and its neighbours: sub-frame precision, since one
     # onset frame is ~12 ms.
-    if 0 < chosen < len(scores) - 1:
-        left, mid, right = scores[chosen - 1], scores[chosen], scores[chosen + 1]
-        curvature = left - 2 * mid + right
-        if curvature < 0:
-            offset += 0.5 * (left - right) / curvature * hop_length / sr
+    # Centroid of the peak's upper half: steadier than a 3-point parabola on a noisy, broad peak.
+    lo = hi = chosen
+    while lo > 0 and scores[lo - 1] >= 0.5 * scores[chosen] and chosen - lo < 3:
+        lo -= 1
+    while hi < len(scores) - 1 and scores[hi + 1] >= 0.5 * scores[chosen] and hi - chosen < 3:
+        hi += 1
+    w = scores[lo : hi + 1]
+    offset = float(np.dot(w, lag_seconds[lo : hi + 1]) / w.sum())
     return offset
 
 
