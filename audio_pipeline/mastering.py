@@ -161,9 +161,9 @@ def _estimate_start_offset(
     # onset frame is ~12 ms.
     # Centroid of the peak's upper half: steadier than a 3-point parabola on a noisy, broad peak.
     lo = hi = chosen
-    while lo > 0 and scores[lo - 1] >= 0.5 * scores[chosen] and chosen - lo < 3:
+    while lo > 0 and scores[lo - 1] >= 0.6 * scores[chosen] and chosen - lo < 2:
         lo -= 1
-    while hi < len(scores) - 1 and scores[hi + 1] >= 0.5 * scores[chosen] and hi - chosen < 3:
+    while hi < len(scores) - 1 and scores[hi + 1] >= 0.6 * scores[chosen] and hi - chosen < 2:
         hi += 1
     w = scores[lo : hi + 1]
     offset = float(np.dot(w, lag_seconds[lo : hi + 1]) / w.sum())
