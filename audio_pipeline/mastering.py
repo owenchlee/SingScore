@@ -194,7 +194,7 @@ def _bleed_offset(y_vocal, y_instrumental, sr: int, max_offset_seconds: float) -
         return None
     # Room reflections arrive after the direct sound and can out-score it, so take the earliest
     # lag that is nearly as strong as the best one: that is the direct speaker-to-mic path.
-    return float((int(np.argmax(window >= 0.8 * peak)) - max_lag) / sr)
+    return float((int(np.argmax(window >= 0.9 * peak)) - max_lag) / sr)
 
 
 _HIGHPASS_HZ = 90
