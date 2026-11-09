@@ -153,7 +153,7 @@ def _estimate_start_offset(
     from scipy.signal import find_peaks
 
     peaks, _ = find_peaks(scores)
-    candidates = [p for p in peaks if scores[p] >= 0.8 * peak] or [best_index]
+    candidates = [p for p in peaks if scores[p] >= 0.6 * peak] or [best_index]
     lag_seconds = lags * hop_length / sr
     chosen = min(candidates, key=lambda p: abs(lag_seconds[p] - _RECORDING_OFFSET_SECONDS))
     offset = float(lag_seconds[chosen])
