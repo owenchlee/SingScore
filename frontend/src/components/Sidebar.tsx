@@ -52,7 +52,7 @@ function Sidebar({ open, onClose, activeScreen }: SidebarProps) {
         onClick={onClose}
         aria-hidden="true"
       />
-      <aside className={`sidebar ${open ? 'sidebar--open' : ''}`} aria-hidden={!open}>
+      <aside className={`sidebar ${open ? 'sidebar--open' : ''}`} inert={!open}>
         <div className="sidebar-header">
           <h2>Menu</h2>
           <button type="button" className="sidebar-close" onClick={onClose} aria-label="Close menu">
