@@ -109,7 +109,7 @@ function VoiceRangeScreen() {
       </p>
 
       <section className="panel">
-        <h2>Voice range</h2>
+        <h1>Voice range</h1>
 
         {savedRange ? (
           <p className="muted">

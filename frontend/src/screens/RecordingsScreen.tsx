@@ -4,7 +4,7 @@ function RecordingsScreen() {
   return (
     <main className="game-screen">
       <section className="panel">
-        <h2>My recordings</h2>
+        <h1>My recordings</h1>
         <RecordingsLibrary />
       </section>
     </main>

@@ -154,6 +154,7 @@ h2 {
   margin: 0;
 }
 
+h1,
 h2 {
   font-size: var(--text-lg);
 }
@@ -254,6 +255,7 @@ code {
   text-align: left;
 }
 
+.panel h1,
 .panel h2 {
   font-size: clamp(1.75rem, 1.35rem + 1.6vw, 2.5rem);
   font-weight: 800;
@@ -789,6 +791,7 @@ code {
   margin-bottom: var(--space-4);
 }
 
+.player-head h1,
 .player-head h2 {
   text-transform: capitalize;
   margin-bottom: 0;
