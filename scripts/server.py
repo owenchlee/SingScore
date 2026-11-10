@@ -53,7 +53,7 @@ SCORES_DIR = Path("scores")
 @dataclass
 class Job:
     id: str
-    url: str
+    url: str = Field(min_length=1, pattern=r"\S")
     language: str | None = None
     separation_model: str = "htdemucs"
     status: str = "queued"
@@ -124,7 +124,10 @@ def _song_dir(base: Path, slug: str) -> Path:
     /api/songs/{slug} comes straight from the URL path.
     """
     base_resolved = base.resolve()
-    candidate = (base_resolved / slug).resolve()
+    try:
+        candidate = (base_resolved / slug).resolve()
+    except (ValueError, OSError):
+        raise HTTPException(status_code=400, detail="Invalid slug")
     if candidate.parent != base_resolved:
         raise HTTPException(status_code=400, detail="Invalid slug")
     return candidate
@@ -215,14 +218,14 @@ def _run_job(job: Job) -> None:
 
 
 class CreateJobRequest(BaseModel):
-    url: str
+    url: str = Field(min_length=1, pattern=r"\S")
     language: Literal["en", "yue"] | None = None
     separation_model: Literal["htdemucs", "htdemucs_ft", "bs_roformer"] = "htdemucs"
 
 
 class SubmitScoreRequest(BaseModel):
     song_id: str
-    score: int
+    score: int = Field(ge=0, le=100)
 
 
 class SetStarredRequest(BaseModel):
@@ -438,6 +441,10 @@ def _parse_recording_filename(path: Path) -> tuple[str, int] | None:
     slug, separator, epoch_part = path.stem.rpartition("__")
     if not separator or not epoch_part.isdigit():
         return None
+    try:
+        datetime.fromtimestamp(int(epoch_part), tz=timezone.utc)
+    except (ValueError, OSError, OverflowError):
+        return None
     return slug, int(epoch_part)
 
 
@@ -459,7 +466,10 @@ def _recording_path(filename: str) -> Path:
     `_song_dir` above, since this filename comes straight from a URL path.
     """
     base_resolved = RECORDINGS_DIR.resolve()
-    candidate = (base_resolved / filename).resolve()
+    try:
+        candidate = (base_resolved / filename).resolve()
+    except (ValueError, OSError):
+        raise HTTPException(status_code=400, detail="Invalid filename")
     if candidate.parent != base_resolved:
         raise HTTPException(status_code=400, detail="Invalid filename")
     return candidate
@@ -579,7 +589,10 @@ def _score_path(slug: str) -> Path:
     /api/scores request body.
     """
     base_resolved = SCORES_DIR.resolve()
-    candidate = (base_resolved / f"{slug}.json").resolve()
+    try:
+        candidate = (base_resolved / f"{slug}.json").resolve()
+    except (ValueError, OSError):
+        raise HTTPException(status_code=400, detail="Invalid slug")
     if candidate.parent != base_resolved:
         raise HTTPException(status_code=400, detail="Invalid slug")
     return candidate
