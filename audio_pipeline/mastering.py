@@ -189,6 +189,7 @@ _VOCAL_TARGET_LUFS = -14
 # Vocal raised from -16 -- feedback was the voice needed to sit louder in the mix. Widens the gap
 # over the instrumental (still -18, unchanged) from 2 LU to 4 LU.
 _INSTRUMENTAL_TARGET_LUFS = -18
+_VOCAL_NOISE_FLOOR_LUFS = -42
 _LIMITER_CEILING = 0.95
 
 
@@ -254,7 +255,8 @@ def master_recording(
     )
     cleaned_vocal_path = _clean_vocal(aligned_vocal_path, output_dir)
     normalized_vocal_path = _apply_loudnorm(
-        cleaned_vocal_path, output_dir / "vocal_normalized.wav", _VOCAL_TARGET_LUFS
+        cleaned_vocal_path, output_dir / "vocal_normalized.wav", _VOCAL_TARGET_LUFS,
+        min_input_lufs=_VOCAL_NOISE_FLOOR_LUFS,  # a mic that only caught noise must not be boosted
     )
     normalized_instrumental_path = _apply_loudnorm(
         aligned_instrumental_path, output_dir / "instrumental_normalized.wav", _INSTRUMENTAL_TARGET_LUFS
