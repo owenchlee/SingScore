@@ -161,6 +161,8 @@ _MAX_SECONDS_PER_CHAR = 0.5
 _LRC_TAG_RE = re.compile(r"^\[(\d{1,3}):(\d{2}(?:\.\d{1,3})?)\]")
 _CJK_RE = re.compile("[一-鿿]")
 
+_CJK_LINE_TOKEN_RE = re.compile(r"[A-Za-z0-9'’]+|\S")
+
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
 # lrclib's plain-text lines routinely include the backing/ad-lib vocal alongside the lead line
@@ -334,7 +336,8 @@ def _tokenize_line(text: str) -> list[str]:
     script word-by-word -- while Latin-script text splits on whitespace.
     """
     if _CJK_RE.search(text):
-        return [char for char in text if not char.isspace()]
+        # Each run of Latin letters/digits/apostrophes stays one word; everything else splits per char.
+        return _CJK_LINE_TOKEN_RE.findall(text)
     return text.split()
 
 
