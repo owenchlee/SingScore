@@ -129,7 +129,7 @@ function VoiceRangeScreen() {
 
         <div className="voice-range-capture-row">
           <div className="voice-range-capture">
-            <h3>Lowest note</h3>
+            <h2>Lowest note</h2>
             <p className="voice-range-value">{lowMidi !== null ? midiToNoteName(lowMidi) : '–'}</p>
             {capturing === 'low' ? (
               <button
@@ -153,7 +153,7 @@ function VoiceRangeScreen() {
           </div>
 
           <div className="voice-range-capture">
-            <h3>Highest note</h3>
+            <h2>Highest note</h2>
             <p className="voice-range-value">{highMidi !== null ? midiToNoteName(highMidi) : '–'}</p>
             {capturing === 'high' ? (
               <button

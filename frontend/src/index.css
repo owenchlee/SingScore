@@ -14,8 +14,8 @@
   --accent-bg: color-mix(in srgb, var(--accent) 12%, transparent);
   --accent-border: color-mix(in srgb, var(--accent) 38%, transparent);
 
-  --cta: #16a34a;
-  --cta-hover: #15803d;
+  --cta: #15803d;
+  --cta-hover: #166534;
   --cta-bg: rgba(22, 163, 74, 0.12);
   --cta-fg: #ffffff;
 
@@ -914,7 +914,12 @@ code {
 }
 
 .badge-row--locked {
-  opacity: 0.45;
+  background: var(--surface-2);
+}
+
+.badge-row--locked .badge-label,
+.badge-row--locked .badge-description {
+  color: var(--text);
 }
 
 .badge-label {
@@ -994,11 +999,11 @@ code {
   text-align: center;
 }
 
-.voice-range-capture h3 {
+.voice-range-capture h2 {
   margin: 0;
   font-size: 0.9rem;
   font-weight: 600;
-  color: var(--muted);
+  color: var(--text);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
