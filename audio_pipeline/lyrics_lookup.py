@@ -158,7 +158,8 @@ def clean_display_title(raw_title: str) -> str:
 # for its own text length instead of trusting an arbitrarily long gap.
 _MAX_SECONDS_PER_CHAR = 0.5
 
-_LRC_TAG_RE = re.compile(r"^\[(\d{1,3}):(\d{2}(?:\.\d{1,3})?)\]")
+_LRC_TAG_RE = re.compile(r"^\[(\d{1,3}):(\d{2}(?:[.:]\d{1,3})?)\]")
+_ENHANCED_TAG_RE = re.compile(r"<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>")
 _CJK_RE = re.compile("[一-鿿]")
 
 _CJK_LINE_TOKEN_RE = re.compile(r"[A-Za-z0-9'’]+|\S")
@@ -309,18 +310,18 @@ def _parse_lrc(lrc_text: str) -> list[tuple[float, str]]:
     """
     lines = []
     for raw_line in lrc_text.splitlines():
-        remainder = raw_line.strip()
+        remainder = raw_line.lstrip("﻿").strip()
         timestamps = []
         while True:
             match = _LRC_TAG_RE.match(remainder)
             if not match:
                 break
             minutes, seconds = match.groups()
-            timestamps.append(int(minutes) * 60 + float(seconds))
+            timestamps.append(int(minutes) * 60 + float(seconds.replace(":", ".")))
             remainder = remainder[match.end():]
         if not timestamps:
             continue
-        text = remainder.strip()
+        text = _ENHANCED_TAG_RE.sub("", remainder).strip()
         if not text:
             continue
         for timestamp in timestamps:
@@ -337,8 +338,22 @@ def _tokenize_line(text: str) -> list[str]:
     """
     if _CJK_RE.search(text):
         # Each run of Latin letters/digits/apostrophes stays one word; everything else splits per char.
-        return _CJK_LINE_TOKEN_RE.findall(text)
-    return text.split()
+        raw = _CJK_LINE_TOKEN_RE.findall(text)
+    else:
+        raw = text.split()
+    # Symbol-only tokens ("，", "-", "♪") are not sung words: glue them onto the neighbouring word.
+    out: list[str] = []
+    pending = ""
+    for tok in raw:
+        if not any(c.isalnum() for c in tok):
+            if out:
+                out[-1] += tok
+            else:
+                pending += tok
+        else:
+            out.append(pending + tok)
+            pending = ""
+    return out
 
 
 def _distribute_words(
@@ -367,6 +382,7 @@ def _words_from_lrc(lrc_text: str) -> tuple[list[dict], list[tuple[float, float]
     words = []
     background_ranges: list[tuple[float, float]] = []
     line = 0
+    last_end = 0.0
     for i, (start, raw_text) in enumerate(parsed_lines):
         next_start = parsed_lines[i + 1][0] if i + 1 < len(parsed_lines) else None
         end = next_start if next_start is not None else start + _FALLBACK_LAST_LINE_DURATION_SECONDS
@@ -381,11 +397,14 @@ def _words_from_lrc(lrc_text: str) -> tuple[list[dict], list[tuple[float, float]
             if _tokenize_line(raw_text):
                 background_ranges.append((start, end))
             continue
+        start = max(start, last_end)
         if next_start is not None:
             total_chars = sum(len(token) for token in tokens) or len(tokens)
             max_plausible_end = start + total_chars * _MAX_SECONDS_PER_CHAR
             end = min(next_start, max_plausible_end)
+        end = max(end, start + 0.01 * len(tokens))
         for word, word_start, word_end in _distribute_words(tokens, start, end):
             words.append({"word": word, "start": word_start, "end": word_end, "line": line})
+        last_end = words[-1]["end"]
         line += 1
     return words, background_ranges
