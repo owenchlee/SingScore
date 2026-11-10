@@ -208,7 +208,7 @@ def _mix_and_limit(vocal_path: Path, instrumental_path: Path, output_path: Path)
     try:
         (
             ffmpeg.filter([vocal_stream, instrumental_stream], "amix", inputs=2, duration="longest", normalize=0)
-            .filter("alimiter", limit=_LIMITER_CEILING)
+            .filter("alimiter", limit=_LIMITER_CEILING, level=0)
             .output(str(output_path))
             .overwrite_output()
             .run(capture_stdout=True, capture_stderr=True)

@@ -54,6 +54,22 @@ def normalize_loudness(input_path: str | Path, output_path: str | Path, target_i
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Digital silence / near-silence measures as -inf (or below loudnorm's valid
+    # -99..0 range); there is nothing to normalize, so just resample unchanged.
+    try:
+        silent = float(stats["input_i"]) < -70
+    except (TypeError, ValueError):
+        silent = True
+    if silent:
+        try:
+            ffmpeg.input(str(input_path)).output(str(output_path), ar=44100).overwrite_output().run(
+                capture_stdout=True, capture_stderr=True
+            )
+        except ffmpeg.Error as exc:
+            stderr_text = exc.stderr.decode(errors="replace") if exc.stderr else ""
+            raise RuntimeError(f"ffmpeg failed to resample {input_path}: {stderr_text}") from exc
+        return output_path
+
     try:
         (
             ffmpeg.input(str(input_path))
