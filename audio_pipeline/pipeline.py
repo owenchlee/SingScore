@@ -5,8 +5,10 @@ Orchestrates video_extraction, separation, melody_extraction, and
 lyrics_extraction into a single call, keyed by a per-song cache directory so a
 song already processed is never reprocessed unnecessarily.
 """
+import hashlib
 import json
 import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -46,8 +48,14 @@ class SongAssets:
 
 
 def slugify(name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    return slug or "song"
+    # Fold accents (e-acute -> e); anything still non-ASCII (CJK, Cyrillic, emoji) or too long
+    # gets a stable hash suffix so distinct titles never share a cache/score/recording slug.
+    folded = "".join(c for c in unicodedata.normalize("NFKD", name) if not unicodedata.combining(c))
+    slug = re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")
+    if folded.isascii() and len(slug) <= 100:
+        return slug or "song"
+    digest = hashlib.sha1(unicodedata.normalize("NFC", name).encode("utf-8")).hexdigest()[:8]
+    return f"{slug[:100].strip('-') or 'song'}-{digest}"
 
 
 def _cached_assets(song_cache_dir: Path) -> SongAssets | None:
