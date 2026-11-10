@@ -76,7 +76,11 @@ def transpose_song(song_cache_dir: str | Path, semitones: int, output_dir: str |
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    audio, sample_rate = sf.read(song_cache_dir / "instrumental.wav")
+    try:
+        audio, sample_rate = sf.read(song_cache_dir / "instrumental.wav")
+        notes = json.loads((song_cache_dir / "notes.json").read_text())
+    except (sf.LibsndfileError, ValueError) as exc:
+        raise ValueError(f"unreadable cached song assets: {exc}") from exc
     shifted_audio = pyrb.pitch_shift(
         audio, sample_rate, n_steps=semitones, rbargs={"--formant": "", "--fine": ""}
     )
@@ -84,7 +88,6 @@ def transpose_song(song_cache_dir: str | Path, semitones: int, output_dir: str |
     instrumental_path = output_dir / "instrumental.wav"
     sf.write(instrumental_path, shifted_audio, sample_rate)
 
-    notes = json.loads((song_cache_dir / "notes.json").read_text())
     notes_path = output_dir / "notes.json"
     notes_path.write_text(json.dumps(_shift_notes(notes, semitones), indent=2))
 

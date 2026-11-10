@@ -30,7 +30,9 @@ from typing import Literal
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -128,7 +130,7 @@ def _song_dir(base: Path, slug: str) -> Path:
         candidate = (base_resolved / slug).resolve()
     except (ValueError, OSError):
         raise HTTPException(status_code=400, detail="Invalid slug")
-    if candidate.parent != base_resolved:
+    if candidate.parent != base_resolved or (candidate.exists() and not candidate.is_dir()):  # non-dir: e.g. Windows device NUL
         raise HTTPException(status_code=400, detail="Invalid slug")
     return candidate
 
@@ -219,12 +221,19 @@ def _run_job(job: Job) -> None:
 
 class CreateJobRequest(BaseModel):
     url: str = Field(min_length=1, pattern=r"\S")
+
+    @field_validator("url")
+    @classmethod
+    def _no_nul(cls, v: str) -> str:
+        if "\x00" in v:
+            raise ValueError("url must not contain NUL")
+        return v
     language: Literal["en", "yue"] | None = None
     separation_model: Literal["htdemucs", "htdemucs_ft", "bs_roformer"] = "htdemucs"
 
 
 class SubmitScoreRequest(BaseModel):
-    song_id: str
+    song_id: str = Field(max_length=200)
     score: int = Field(ge=0, le=100)
 
 
@@ -242,6 +251,15 @@ class TransposeRequest(BaseModel):
 
 
 app = FastAPI()
+
+
+@app.exception_handler(RequestValidationError)
+def _validation_error(_request, exc: RequestValidationError) -> JSONResponse:
+    # Drop each error's echoed `input`/`ctx`: a NaN score there cannot be JSON-encoded (was a 500).
+    errors = [{k: v for k, v in e.items() if k not in ("input", "ctx", "url")} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -302,7 +320,7 @@ def list_songs() -> dict:
             meta_path = CACHE_DIR / entry.name / "meta.json"
             if meta_path.exists():
                 meta = _read_json(meta_path)
-                title = clean_display_title(meta["title"]) if meta.get("title") else entry.name
+                title = clean_display_title(meta["title"]) if isinstance(meta.get("title"), str) and meta["title"] else entry.name
                 processed_at = meta.get("processed_at")
                 starred = bool(meta.get("starred", False))
             songs.append({
@@ -395,6 +413,8 @@ def transpose_song_key(slug: str, request: TransposeRequest) -> dict:
         if not instrumental_path.exists() or not notes_path.exists():
             try:
                 transpose_song(song_dir, request.semitones, transposed_dir)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             except RuntimeError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -428,7 +448,7 @@ def _recording_title(slug: str) -> str:
     meta_path = CACHE_DIR / slug / "meta.json"
     if meta_path.exists():
         meta = _read_json(meta_path)
-        if meta.get("title"):
+        if isinstance(meta.get("title"), str) and meta["title"]:
             return clean_display_title(meta["title"])
     return slug
 
@@ -527,7 +547,9 @@ def render_recording_mp3(
             )
             mp3_path = transcode_to_mp3(mastered_path, Path(tmp_dir))
         except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            # An undecodable upload is the client's fault, not a server failure.
+            status = 422 if "failed to transcode" in str(exc) else 500
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
         shutil.copy(mp3_path, saved_path)
 
     return FileResponse(
