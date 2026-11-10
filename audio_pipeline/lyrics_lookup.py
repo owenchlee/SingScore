@@ -92,10 +92,19 @@ def _strip_feat(text: str) -> str:
 def _strip_noise_tokens(text: str) -> str:
     def is_noise(token: str) -> bool:
         lowered = token.lower()
-        return any(
-            lowered == keyword or lowered.startswith(keyword) or lowered.endswith(keyword)
-            for keyword in _NOISE_KEYWORDS
-        )
+        bare = lowered.strip(".,:;!?-–—_*~|/\\\"'")
+        for keyword in _NOISE_KEYWORDS:
+            if bare == keyword:
+                return True
+            if keyword.isascii():
+                # ASCII tags only count when glued to a CJK label, never inside a real word.
+                if bare.endswith(keyword) and len(bare) > len(keyword) and not bare[-len(keyword) - 1].isascii():
+                    return True
+                if bare.startswith(keyword) and len(bare) > len(keyword) and not bare[len(keyword)].isascii():
+                    return True
+            elif bare.startswith(keyword) or bare.endswith(keyword):
+                return True
+        return False
 
     return " ".join(token for token in text.split() if not is_noise(token))
 
