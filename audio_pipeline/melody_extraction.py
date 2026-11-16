@@ -511,6 +511,50 @@ def _refine_with_pyin(notes: list[dict], audio: np.ndarray, sample_rate: int) ->
     return _drop_unconfirmed_pitch_spikes(refined, times, midi)
 
 
+# Fragments of one held note (vibrato dips, onset re-triggers) come out as touching same-pitch
+# notes. shortcut: a real same-pitch repeat with a gap this small is also merged; lower if needed.
+_MERGE_MAX_GAP_S = 0.12
+
+
+# A real re-articulation (repeated note) dips the amplitude envelope at the junction; a vibrato or
+# onset re-trigger fragment of one held note does not. Frames of this length are scanned around it.
+_JUNCTION_FRAME_S = 0.01
+_JUNCTION_WINDOW_S = 0.04
+_JUNCTION_DIP_RATIO = 0.5
+
+
+def _has_energy_dip(last: dict, note: dict, audio: np.ndarray, sample_rate: int) -> bool:
+    start = max(0.0, min(last["offset"], note["onset"]) - _JUNCTION_WINDOW_S)
+    end = max(last["offset"], note["onset"]) + _JUNCTION_WINDOW_S
+    frames = np.arange(start, end, _JUNCTION_FRAME_S)
+    if len(frames) == 0:
+        return False
+    dip = min(_note_rms(audio, sample_rate, f, f + _JUNCTION_FRAME_S) for f in frames)
+    side = min(
+        _note_rms(audio, sample_rate, last["onset"], last["offset"]),
+        _note_rms(audio, sample_rate, note["onset"], note["offset"]),
+    )
+    return dip < _JUNCTION_DIP_RATIO * side
+
+
+def _merge_same_pitch_fragments(notes: list[dict], audio: np.ndarray, sample_rate: int) -> list[dict]:
+    merged: list[dict] = []
+    for note in notes:
+        last = merged[-1] if merged else None
+        if (
+            last
+            and last["pitch_midi"] == note["pitch_midi"]
+            and note["onset"] - last["offset"] <= _MERGE_MAX_GAP_S
+            and not _has_energy_dip(last, note, audio, sample_rate)
+        ):
+            last["offset"] = max(last["offset"], note["offset"])
+            last["duration"] = round(last["offset"] - last["onset"], 4)
+            last["velocity"] = max(last["velocity"], note["velocity"])
+        else:
+            merged.append(dict(note))
+    return merged
+
+
 def extract_melody(vocal_stem_path: str | Path, output_dir: str | Path) -> MelodyResult:
     """Run basic-pitch pitch extraction on ``vocal_stem_path`` and save the
     resulting melody as both a MIDI file and a JSON note-event list inside
@@ -557,6 +601,7 @@ def extract_melody(vocal_stem_path: str | Path, output_dir: str | Path) -> Melod
     notes = _enforce_monophony(notes)
     notes = _collapse_octave_blips(notes)
     notes = _refine_with_pyin(notes, audio, sample_rate)
+    notes = _merge_same_pitch_fragments(notes, audio, sample_rate)
 
     midi_data = pretty_midi.PrettyMIDI()
     instrument = pretty_midi.Instrument(program=0)
