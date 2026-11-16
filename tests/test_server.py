@@ -419,6 +419,67 @@ def test_run_job_forces_reprocessing_when_the_cached_model_differs(tmp_path, mon
     assert job.status == "done"
 
 
+def test_link_jobs_are_refused_unless_link_download_is_enabled(monkeypatch):
+    monkeypatch.setattr(server, "LINK_DOWNLOAD_ENABLED", False)
+    client = TestClient(server.app)
+
+    response = client.post("/api/jobs", json={"url": "https://example.com/watch?v=abc"})
+
+    assert response.status_code == 403
+    assert client.get("/api/capabilities").json() == {"link_download": False}
+
+
+def test_upload_job_processes_the_file_without_downloading_and_cleans_it_up(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(server, "PUBLIC_DIR", tmp_path / "public")
+    monkeypatch.setattr(server, "_SLUG_LOCKS", {})
+    seen = {}
+
+    def fake_process_song(
+        video_path, cache_dir, song_id, on_progress, language, lyrics_query, separation_model,
+        force,
+    ):
+        seen["bytes"] = Path(video_path).read_bytes()
+        seen["song_id"] = song_id
+        song_cache_dir = Path(cache_dir) / song_id
+        song_cache_dir.mkdir(parents=True, exist_ok=True)
+        for name in ("instrumental.wav", "notes.json", "lyrics.json"):
+            (song_cache_dir / name).write_bytes(b"[]")
+        (song_cache_dir / "meta.json").write_text(
+            json.dumps({"song_id": song_id, "processed_at": "2026-01-01T00:00:00+00:00",
+                        "separation_model": separation_model})
+        )
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("an upload job must not touch the network")
+
+    monkeypatch.setattr(server, "process_song", fake_process_song)
+    monkeypatch.setattr(server, "download_audio", _fail_if_called)
+    monkeypatch.setattr(server, "probe_title", _fail_if_called)
+    # Run the job inline so the test can assert on the result.
+    monkeypatch.setattr(server.threading, "Thread", lambda target, args, daemon: type(
+        "T", (), {"start": lambda self: target(*args)})())
+
+    client = TestClient(server.app)
+    response = client.post(
+        "/api/jobs/upload", files={"file": ("My Song.mp3", b"audio-bytes", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    job = server._JOBS[response.json()["job_id"]]
+    assert job.status == "done"
+    assert seen == {"bytes": b"audio-bytes", "song_id": "my-song"}
+    assert not job.upload_path.exists()
+
+
+def test_upload_job_rejects_an_empty_file():
+    client = TestClient(server.app)
+
+    response = client.post("/api/jobs/upload", files={"file": ("empty.mp3", b"", "audio/mpeg")})
+
+    assert response.status_code == 400
+
+
 def test_run_job_skips_reprocessing_when_the_cached_model_matches(tmp_path, monkeypatch):
     cache_dir = tmp_path / "cache"
     public_dir = tmp_path / "public"

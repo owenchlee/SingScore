@@ -19,6 +19,8 @@ interface GpuStatus {
 
 function LoadSongForm({ onLoaded }: LoadSongFormProps) {
   const [url, setUrl] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [linkDownload, setLinkDownload] = useState(false)
   const [language, setLanguage] = useState<LanguageOption>('')
   const [separationModel, setSeparationModel] = useState<SeparationModelOption>('htdemucs')
   const [job, setJob] = useState<JobState | null>(null)
@@ -39,6 +41,10 @@ function LoadSongForm({ onLoaded }: LoadSongFormProps) {
       .then((response) => (response.ok ? (response.json() as Promise<GpuStatus>) : null))
       .then((status) => setGpuStatus(status))
       .catch(() => setGpuStatus(null))
+    fetch('/api/capabilities')
+      .then((response) => (response.ok ? (response.json() as Promise<{ link_download: boolean }>) : null))
+      .then((caps) => setLinkDownload(caps?.link_download === true))
+      .catch(() => setLinkDownload(false))
   }, [])
 
   const pollJob = (jobId: string) => {
@@ -66,18 +72,28 @@ function LoadSongForm({ onLoaded }: LoadSongFormProps) {
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
-    if (!url.trim() || isBusy) return
+    if (!canSubmit || isBusy) return
 
     setJob({ status: 'queued', progress: 0, slug: null, error: null })
-    fetch('/api/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url: url.trim(),
-        language: language || null,
-        separation_model: separationModel,
-      }),
-    })
+    let request: Promise<Response>
+    if (file) {
+      const body = new FormData()
+      body.append('file', file)
+      body.append('language', language)
+      body.append('separation_model', separationModel)
+      request = fetch('/api/jobs/upload', { method: 'POST', body })
+    } else {
+      request = fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: url.trim(),
+          language: language || null,
+          separation_model: separationModel,
+        }),
+      })
+    }
+    request
       .then((response) => {
         if (response.status === 502) {
           throw new Error(
@@ -95,29 +111,40 @@ function LoadSongForm({ onLoaded }: LoadSongFormProps) {
   }
 
   const isBusy = job !== null && job.status !== 'done' && job.status !== 'error'
+  const canSubmit = file !== null || (linkDownload && url.trim() !== '')
 
   return (
     <form className="load-song-form" onSubmit={handleSubmit}>
-      <label className="field-label" htmlFor="song-link">
-        Load a song from a link
+      <label className="field-label" htmlFor="song-file">
+        Load a song from an audio file
       </label>
       <div className="input-row">
-        <div className="input-with-icon">
-          <span className="input-icon">
-            <LinkIcon size={18} />
-          </span>
-          <input
-            id="song-link"
-            className="input"
-            type="url"
-            inputMode="url"
-            placeholder="Paste a YouTube link…"
-            value={url}
-            onChange={(event) => setUrl(event.target.value)}
-            disabled={isBusy}
-            required
-          />
-        </div>
+        <input
+          id="song-file"
+          className="input"
+          type="file"
+          accept="audio/*,video/*"
+          onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          disabled={isBusy}
+        />
+        {linkDownload && (
+          <div className="input-with-icon">
+            <span className="input-icon">
+              <LinkIcon size={18} />
+            </span>
+            <input
+              id="song-link"
+              className="input"
+              type="url"
+              inputMode="url"
+              placeholder="…or paste a link"
+              aria-label="Song link"
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              disabled={isBusy || file !== null}
+            />
+          </div>
+        )}
         <select
           id="song-language"
           className="select-language"
@@ -142,12 +169,13 @@ function LoadSongForm({ onLoaded }: LoadSongFormProps) {
           <option value="htdemucs_ft">Better quality (slower)</option>
           <option value="bs_roformer">Best quality (slowest)</option>
         </select>
-        <button type="submit" className="btn btn-primary" disabled={isBusy || !url.trim()}>
+        <button type="submit" className="btn btn-primary" disabled={isBusy || !canSubmit}>
           {isBusy ? 'Processing…' : 'Load'}
         </button>
       </div>
       <p className="muted form-hint">
-        Processing runs locally on this machine and isn't uploaded anywhere: use links you have the rights to.
+        Processing runs locally on this machine and isn't uploaded anywhere. Only use audio you
+        own or have permission to use.
       </p>
 
       {gpuStatus && (
