@@ -45,14 +45,33 @@ def measure_loudness(input_path: str | Path, target_i: float) -> dict:
     return json.loads(match.group(0))
 
 
-def normalize_loudness(input_path: str | Path, output_path: str | Path, target_i: float) -> Path:
+def normalize_loudness(
+    input_path: str | Path, output_path: str | Path, target_i: float, *, min_input_lufs: float = -70
+) -> Path:
     """Second pass: normalizes ``input_path`` to ``target_i`` LUFS using the
     stats ``measure_loudness`` already measured, writing the result to
-    ``output_path``.
+    ``output_path``. Input measuring below ``min_input_lufs`` is treated as
+    silence/noise and resampled without gain.
     """
     stats = measure_loudness(input_path, target_i)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Digital silence / near-silence measures as -inf (or below loudnorm's valid
+    # -99..0 range); there is nothing to normalize, so just resample unchanged.
+    try:
+        silent = float(stats["input_i"]) < min_input_lufs
+    except (TypeError, ValueError):
+        silent = True
+    if silent:
+        try:
+            ffmpeg.input(str(input_path)).output(str(output_path), ar=44100).overwrite_output().run(
+                capture_stdout=True, capture_stderr=True
+            )
+        except ffmpeg.Error as exc:
+            stderr_text = exc.stderr.decode(errors="replace") if exc.stderr else ""
+            raise RuntimeError(f"ffmpeg failed to resample {input_path}: {stderr_text}") from exc
+        return output_path
 
     try:
         (

@@ -247,6 +247,7 @@ _VOCAL_TARGET_LUFS = -14
 # Vocal raised from -16 -- feedback was the voice needed to sit louder in the mix. Widens the gap
 # over the instrumental (still -18, unchanged) from 2 LU to 4 LU.
 _INSTRUMENTAL_TARGET_LUFS = -18
+_VOCAL_NOISE_FLOOR_LUFS = -42
 _LIMITER_CEILING = 0.95
 
 
@@ -266,7 +267,7 @@ def _mix_and_limit(vocal_path: Path, instrumental_path: Path, output_path: Path)
     try:
         (
             ffmpeg.filter([vocal_stream, instrumental_stream], "amix", inputs=2, duration="longest", normalize=0)
-            .filter("alimiter", limit=_LIMITER_CEILING)
+            .filter("alimiter", limit=_LIMITER_CEILING, level=0)
             .output(str(output_path))
             .overwrite_output()
             .run(capture_stdout=True, capture_stderr=True)
@@ -316,7 +317,10 @@ def master_recording(
     )
     def vocal_chain() -> Path:
         cleaned_vocal_path = _clean_vocal(aligned_vocal_path, output_dir)
-        return _apply_loudnorm(cleaned_vocal_path, output_dir / "vocal_normalized.wav", _VOCAL_TARGET_LUFS)
+        return _apply_loudnorm(
+            cleaned_vocal_path, output_dir / "vocal_normalized.wav", _VOCAL_TARGET_LUFS,
+            min_input_lufs=_VOCAL_NOISE_FLOOR_LUFS,  # a mic that only caught noise must not be boosted
+        )
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         vocal_future = pool.submit(vocal_chain)
