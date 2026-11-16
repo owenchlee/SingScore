@@ -72,6 +72,29 @@ describe('computeCalibrationResult', () => {
     const result = computeCalibrationResult(beats, taps)
     expect(result!.offsetSeconds).toBeLessThan(0)
   })
+
+  it('measures a Bluetooth-class latency above half the beat spacing instead of locking onto the next beat', () => {
+    // useCalibration's real schedule: 8 clicks at 100 BPM (0.6 s apart).
+    const beats = Array.from({ length: 8 }, (_, i) => 10 + i * 0.6)
+    const taps = beats.map((b, i) => b + 0.45 + (i % 2 === 0 ? 0.02 : -0.02))
+    const result = computeCalibrationResult(beats, taps)
+    expect(result!.offsetSeconds).toBeCloseTo(0.45, 1)
+    expect(result!.matchedBeats).toBe(8)
+  })
+
+  it('keeps a Bluetooth-class latency when the last beat is missed instead of picking the one-beat-early alias', () => {
+    const beats = Array.from({ length: 8 }, (_, i) => 10 + i * 0.6)
+    const taps = beats.slice(0, 7).map((b, i) => b + 0.42 + (i % 2 === 0 ? 0.02 : -0.02))
+    const result = computeCalibrationResult(beats, taps)
+    expect(result!.offsetSeconds).toBeCloseTo(0.42, 1)
+  })
+
+  it('keeps a small early offset when the user joins late instead of picking the one-beat-late alias', () => {
+    const beats = Array.from({ length: 8 }, (_, i) => 10 + i * 0.6)
+    const taps = beats.slice(1).map((b, i) => b - 0.05 + (i % 2 === 0 ? 0.02 : -0.02))
+    const result = computeCalibrationResult(beats, taps)
+    expect(result!.offsetSeconds).toBeCloseTo(-0.05, 1)
+  })
 })
 
 describe('calibration offset storage', () => {
@@ -121,5 +144,15 @@ describe('calibration offset storage', () => {
     saveCalibrationOffsetSeconds(0)
     expect(hasCalibrationOffset()).toBe(true)
     expect(loadCalibrationOffsetSeconds()).toBe(0)
+  })
+})
+
+describe('computeCalibrationResult alias rejection', () => {
+  it('prefers the tight true-latency cluster over a one-beat alias that borrows a stray tap', () => {
+    // Late start (joins at beat 3), ~0.53 s Bluetooth-class latency, one stray tap before beat 1.
+    const beats = Array.from({ length: 8 }, (_, i) => 10 + i * 0.6)
+    const taps = [-0.163, 1.785, 2.371, 2.934, 3.576, 4.112, 4.78].map((t) => 10 + t)
+    const result = computeCalibrationResult(beats, taps)
+    expect(result?.offsetSeconds).toBeCloseTo(0.534, 1)
   })
 })
