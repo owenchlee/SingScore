@@ -13,6 +13,7 @@ scripts/server.py calls; the rest of this module is its implementation,
 ordered in the same sequence the audio actually flows through: align ->
 clean the vocal -> loudness-normalize each track -> mix -> limit.
 """
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import ffmpeg
@@ -64,26 +65,24 @@ def _correct_start_offset(
     same real moment. Positive ``offset_seconds`` means the vocal lags (the
     common case, see the module docstring) -- trims that many seconds off the
     *front* of the vocal track. Negative means the vocal leads -- trims off
-    the instrumental's front instead. Zero is a no-op: both tracks are copied
-    through unchanged.
+    the instrumental's front instead. Zero is a no-op. A track that needs no
+    trim is returned as its original path, with no read or write round-trip.
     """
-    vocal_data, vocal_sr = sf.read(vocal_path)
-    instrumental_data, instrumental_sr = sf.read(instrumental_path)
-
-    if offset_seconds > 0:
-        trim_samples = int(round(offset_seconds * vocal_sr))
-        vocal_data = vocal_data[trim_samples:]
-    elif offset_seconds < 0:
-        trim_samples = int(round(-offset_seconds * instrumental_sr))
-        instrumental_data = instrumental_data[trim_samples:]
-
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    aligned_vocal_path = output_dir / "vocal_aligned.wav"
-    aligned_instrumental_path = output_dir / "instrumental_aligned.wav"
-    sf.write(aligned_vocal_path, vocal_data, vocal_sr)
-    sf.write(aligned_instrumental_path, instrumental_data, instrumental_sr)
-    return aligned_vocal_path, aligned_instrumental_path
+
+    def trim_front(path: Path, seconds: float, name: str) -> Path:
+        samplerate = sf.info(str(path)).samplerate
+        data, _ = sf.read(path, start=int(round(seconds * samplerate)))
+        trimmed_path = output_dir / name
+        sf.write(trimmed_path, data, samplerate)
+        return trimmed_path
+
+    if offset_seconds > 0:
+        vocal_path = trim_front(vocal_path, offset_seconds, "vocal_aligned.wav")
+    elif offset_seconds < 0:
+        instrumental_path = trim_front(instrumental_path, -offset_seconds, "instrumental_aligned.wav")
+    return Path(vocal_path), Path(instrumental_path)
 
 
 def _estimate_start_offset(
@@ -242,8 +241,12 @@ def master_recording(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    vocal_wav = transcode_to_wav(vocal_path, output_dir)
-    instrumental_wav = transcode_to_wav(instrumental_path, output_dir)
+    # The vocal and instrumental chains are independent ffmpeg subprocesses until the final mix, so
+    # run each pair side by side (threads suffice: the work happens in ffmpeg, outside the GIL).
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        vocal_future = pool.submit(transcode_to_wav, vocal_path, output_dir)
+        instrumental_wav = transcode_to_wav(instrumental_path, output_dir)
+        vocal_wav = vocal_future.result()
 
     offset_seconds = _estimate_start_offset(vocal_wav, instrumental_wav)
     if offset_seconds is None:
@@ -252,13 +255,16 @@ def master_recording(
     aligned_vocal_path, aligned_instrumental_path = _correct_start_offset(
         vocal_wav, instrumental_wav, output_dir, offset_seconds
     )
-    cleaned_vocal_path = _clean_vocal(aligned_vocal_path, output_dir)
-    normalized_vocal_path = _apply_loudnorm(
-        cleaned_vocal_path, output_dir / "vocal_normalized.wav", _VOCAL_TARGET_LUFS
-    )
-    normalized_instrumental_path = _apply_loudnorm(
-        aligned_instrumental_path, output_dir / "instrumental_normalized.wav", _INSTRUMENTAL_TARGET_LUFS
-    )
+    def vocal_chain() -> Path:
+        cleaned_vocal_path = _clean_vocal(aligned_vocal_path, output_dir)
+        return _apply_loudnorm(cleaned_vocal_path, output_dir / "vocal_normalized.wav", _VOCAL_TARGET_LUFS)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        vocal_future = pool.submit(vocal_chain)
+        normalized_instrumental_path = _apply_loudnorm(
+            aligned_instrumental_path, output_dir / "instrumental_normalized.wav", _INSTRUMENTAL_TARGET_LUFS
+        )
+        normalized_vocal_path = vocal_future.result()
 
     mastered_path = output_dir / "mastered.wav"
     _mix_and_limit(normalized_vocal_path, normalized_instrumental_path, mastered_path)
