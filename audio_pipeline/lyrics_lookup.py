@@ -89,15 +89,37 @@ def _strip_feat(text: str) -> str:
 # false-positive here since a real bare title word could coincidentally contain a short keyword like
 # "hd" or "mv" mid-word) -- every real noise tag observed glues on cleanly at one edge of the token,
 # never buried in the middle of an unrelated word.
-def _strip_noise_tokens(text: str) -> str:
-    def is_noise(token: str) -> bool:
-        lowered = token.lower()
-        return any(
-            lowered == keyword or lowered.startswith(keyword) or lowered.endswith(keyword)
-            for keyword in _NOISE_KEYWORDS
-        )
+# Words that are real title words too ("Video Games", "Cover Me Up"): a bare one only counts as
+# noise when it ends the title or follows another noise token ("Official Video").
+_AMBIGUOUS_WORDS = frozenset({"video", "audio", "cover", "prod", "lyric", "instrumental"})
 
-    return " ".join(token for token in text.split() if not is_noise(token))
+
+def _strip_noise_tokens(text: str) -> str:
+    tokens = text.split()
+    prev_noise = False
+
+    def is_noise(token: str, is_last: bool) -> bool:
+        lowered = token.lower()
+        bare = lowered.strip(".,:;!?-–—_*~|/\\\"'")
+        for keyword in _NOISE_KEYWORDS:
+            if bare == keyword:
+                return not (bare in _AMBIGUOUS_WORDS and not is_last and not prev_noise)
+            if keyword.isascii():
+                # ASCII tags only count when glued to a CJK label, never inside a real word.
+                if bare.endswith(keyword) and len(bare) > len(keyword) and not bare[-len(keyword) - 1].isascii():
+                    return True
+                if bare.startswith(keyword) and len(bare) > len(keyword) and not bare[len(keyword)].isascii():
+                    return True
+            elif bare.startswith(keyword) or bare.endswith(keyword):
+                return True
+        return False
+
+    kept = []
+    for i, token in enumerate(tokens):
+        prev_noise = is_noise(token, i == len(tokens) - 1)
+        if not prev_noise:
+            kept.append(token)
+    return " ".join(kept)
 
 
 def _parse_title(raw_query: str) -> tuple[str, str | None]:
