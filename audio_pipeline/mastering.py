@@ -107,15 +107,23 @@ def _estimate_start_offset(
     y_vocal, sr = librosa.load(str(vocal_path), sr=None, mono=True)
     y_instrumental, _ = librosa.load(str(instrumental_path), sr=sr, mono=True)
 
+    bleed_offset = _bleed_offset(y_vocal, y_instrumental, sr, max_offset_seconds)
+    if bleed_offset is not None:
+        return bleed_offset
+
     hop_length = 512
     onset_vocal = librosa.onset.onset_strength(y=y_vocal, sr=sr, hop_length=hop_length)
     onset_instrumental = librosa.onset.onset_strength(y=y_instrumental, sr=sr, hop_length=hop_length)
 
-    if not np.any(onset_vocal) or not np.any(onset_instrumental):
+    if np.std(onset_vocal) == 0 or np.std(onset_instrumental) == 0:
         return None
+    # Zero-mean, unit-variance envelopes so the score curve swings around zero and a real
+    # alignment shows up as a peak instead of riding on the envelopes' constant offset.
+    onset_vocal = (onset_vocal - onset_vocal.mean()) / onset_vocal.std()
+    onset_instrumental = (onset_instrumental - onset_instrumental.mean()) / onset_instrumental.std()
 
     max_lag_frames = max(1, int(round(max_offset_seconds * sr / hop_length)))
-    lags = range(-max_lag_frames, max_lag_frames + 1)
+    lags = np.arange(-max_lag_frames, max_lag_frames + 1)
     scores = np.empty(len(lags))
 
     for i, lag in enumerate(lags):
@@ -127,17 +135,65 @@ def _estimate_start_offset(
         else:
             a, b = onset_vocal, onset_instrumental[-lag:]
         n = min(len(a), len(b))
-        scores[i] = float(np.dot(a[:n], b[:n])) if n > 0 else 0.0
+        scores[i] = float(np.dot(a[:n], b[:n])) / n if n > 0 else 0.0
 
     best_index = int(np.argmax(scores))
     peak = scores[best_index]
-    mean_abs = float(np.mean(np.abs(scores)))
-    # A real, sharp lag stands well above the rest of the window; a near-silent or unrelated take
-    # produces a flat, noisy score curve with no such standout -- this threshold is the difference.
-    if peak <= 0 or mean_abs == 0 or peak < 3 * mean_abs:
+    overlap = min(len(onset_vocal), len(onset_instrumental)) - abs(int(lags[best_index]))
+    # Significance gate: for unrelated z-scored envelopes the normalised correlation is ~N(0, 1/n),
+    # so peak * sqrt(n) is a z-score. Unrelated or near-silent takes stay around 3 even at the
+    # best of the window; a real rhythmic match scores well above 5.
+    if peak <= 0 or overlap <= 0 or peak * np.sqrt(overlap) < 5:
         return None
 
-    return float(list(lags)[best_index] * hop_length / sr)
+    # Rhythmic music makes the curve repeat every beat, so several lags score almost the same.
+    # Rhythm alone can't tell them apart; among those near-ties take the one closest to the
+    # typical hardware latency prior rather than whichever won by noise.
+    from scipy.signal import find_peaks
+
+    peaks, _ = find_peaks(scores)
+    candidates = [p for p in peaks if scores[p] >= 0.8 * peak] or [best_index]
+    lag_seconds = lags * hop_length / sr
+    chosen = min(candidates, key=lambda p: abs(lag_seconds[p] - _RECORDING_OFFSET_SECONDS))
+    offset = float(lag_seconds[chosen])
+    # Parabolic interpolation through the peak and its neighbours: sub-frame precision, since one
+    # onset frame is ~12 ms.
+    if 0 < chosen < len(scores) - 1:
+        left, mid, right = scores[chosen - 1], scores[chosen], scores[chosen + 1]
+        curvature = left - 2 * mid + right
+        if curvature < 0:
+            offset += 0.5 * (left - right) / curvature * hop_length / sr
+    return offset
+
+
+def _bleed_offset(y_vocal, y_instrumental, sr: int, max_offset_seconds: float) -> float | None:
+    """Sample-accurate lag of the instrumental's speaker bleed inside the mic track, via
+    PHAT-weighted cross-correlation. Bleed travels the same output+input latency path as the voice,
+    so its lag is the take's offset. Returns ``None`` when there is no clear bleed peak (e.g. a
+    headphone take), leaving the rhythm-only path to decide."""
+    import numpy as np
+
+    n = min(len(y_vocal), len(y_instrumental))
+    if n == 0:
+        return None
+    max_lag = min(n - 1, int(round(max_offset_seconds * sr)))
+    size = 1 << int(np.ceil(np.log2(n + max_lag)))
+    cross = np.fft.rfft(y_vocal[:n], size) * np.conj(np.fft.rfft(y_instrumental[:n], size))
+    magnitude = np.abs(cross)
+    # Regularised PHAT: whiten so the direct-path peak is sharp, but don't amplify empty bins.
+    cross /= magnitude + 1e-3 * (np.max(magnitude) + 1e-12)
+    corr = np.fft.irfft(cross, size)
+    # Index k holds lag k (vocal lags); negative lags wrap to the end.
+    window = np.concatenate([corr[size - max_lag:], corr[: max_lag + 1]])
+    best = int(np.argmax(window))
+    peak = window[best]
+    guard = max(1, int(0.002 * sr))
+    rest = np.delete(window, slice(max(0, best - guard), best + guard + 1))
+    if peak <= 0 or rest.size == 0 or peak < 8 * np.std(rest):
+        return None
+    # Room reflections arrive after the direct sound and can out-score it, so take the earliest
+    # lag that is nearly as strong as the best one: that is the direct speaker-to-mic path.
+    return float((int(np.argmax(window >= 0.8 * peak)) - max_lag) / sr)
 
 
 _HIGHPASS_HZ = 90
