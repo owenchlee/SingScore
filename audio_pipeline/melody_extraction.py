@@ -94,6 +94,12 @@ def _note_rms(audio: np.ndarray, sample_rate: int, start_s: float, end_s: float)
 #     trim the other's boundary back to remove the overlap, dropping it
 #     entirely if trimming would leave a sliver under _MIN_TRIMMED_DURATION_S.
 _MIN_TRIMMED_DURATION_S = 0.05
+# A sung note longer than this swallowing later notes is far more likely bleed than a real hold.
+_MAX_CONTAINER_NOTE_S = 3.0
+
+
+# A much weaker note swallowing a clearly more confident one is bleed, not the real note.
+_CONTAINER_VELOCITY_MARGIN = 0.3
 
 
 def _enforce_monophony(notes: list[dict]) -> list[dict]:
@@ -105,6 +111,21 @@ def _enforce_monophony(notes: list[dict]) -> list[dict]:
             if note["onset"] >= last["offset"]:
                 break
             if note["offset"] <= last["offset"]:
+                if (
+                    last["duration"] > _MAX_CONTAINER_NOTE_S
+                    or (
+                        note["velocity"] - last["velocity"] >= _CONTAINER_VELOCITY_MARGIN
+                        and (note["pitch_midi"] - last["pitch_midi"]) % 12 != 0  # octaves are harmonic artifacts
+                    )
+                ):
+                    # An implausibly long note (steady backing-track bleed) is not a harmonic
+                    # artifact of a real held note: cut it at the contained note's onset instead.
+                    last["offset"] = note["onset"]
+                    last["duration"] = round(last["offset"] - last["onset"], 4)
+                    if last["duration"] < _MIN_TRIMMED_DURATION_S:
+                        kept.pop()
+                        continue
+                    break
                 note = None
                 break
             if note["velocity"] > last["velocity"]:
@@ -270,6 +291,7 @@ _GAP_REPAIR_PITCH_TOLERANCE_SEMITONES = _OFFSET_EXTEND_MATCH_SEMITONES
 # A synthesized note has no basic-pitch confidence score behind it at all -- a neutral, middling
 # velocity rather than a fitted value.
 _GAP_REPAIR_VELOCITY = 0.5
+_GAP_REPAIR_MIN_RELATIVE_RMS = 0.5
 
 
 def _pyin_track(audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, np.ndarray]:
@@ -332,6 +354,14 @@ def _repair_melody_gaps(
     boundaries += [(a["offset"], b["onset"]) for a, b in zip(notes, notes[1:])]
     boundaries.append((notes[-1]["offset"], audio_duration))
 
+    # Backing-track bleed is voiced and above the silence gate but much quieter than the singer, so
+    # a synthesized note must also be at least a fraction as loud as the typical detected note.
+    gate = max(
+        _SILENCE_RMS_GATE,
+        _GAP_REPAIR_MIN_RELATIVE_RMS
+        * float(np.median([_note_rms(audio, sample_rate, n["onset"], n["offset"]) for n in notes])),
+    )
+
     new_notes: list[dict] = []
     for gap_start, gap_end in boundaries:
         if gap_end - gap_start < _GAP_REPAIR_MIN_GAP_SECONDS:
@@ -350,7 +380,7 @@ def _repair_melody_gaps(
                 run_start_time is not None
                 and run_values
                 and run_end_time - run_start_time >= _GAP_REPAIR_MIN_RUN_SECONDS
-                and _note_rms(audio, sample_rate, run_start_time, run_end_time) >= _SILENCE_RMS_GATE
+                and _note_rms(audio, sample_rate, run_start_time, run_end_time) >= gate
             ):
                 pitch_midi = int(round(float(np.median(run_values))))
                 new_notes.append(
@@ -438,6 +468,64 @@ def _drop_unconfirmed_pitch_spikes(
     return kept
 
 
+# Applied after merging: anything shorter is treated as a spurious fragment.
+_FINAL_MIN_NOTE_S = 0.2
+
+
+def _has_energy_at_lower_pitch(audio: np.ndarray, sample_rate: int, note: dict, lower_midi: int) -> bool:
+    """True if the note's window has at least as much spectral energy near ``lower_midi`` as near
+    the note's own (higher) pitch, i.e. the lower pitch is a real fundamental, not just bleed."""
+    segment = audio[max(0, int(note["onset"] * sample_rate)) : int(note["offset"] * sample_rate)]
+    if len(segment) == 0:
+        return False
+    spectrum = np.abs(np.fft.rfft(segment * np.hanning(len(segment))))
+    freqs = np.fft.rfftfreq(len(segment), 1 / sample_rate)
+
+    def peak(midi_pitch: float) -> float:
+        hz = _midi_to_hz(midi_pitch)
+        band = (freqs >= hz * 0.97) & (freqs <= hz * 1.03)
+        return float(spectrum[band].max()) if band.any() else 0.0
+
+    return peak(lower_midi) >= peak(note["pitch_midi"])
+
+
+_SPLIT_MIN_NOTE_S = 0.5
+_SPLIT_EDGE_S = 0.15
+_SPLIT_FRAME_S = 0.01
+# A dip this far below the note's median level is a re-articulation, not vibrato.
+_SPLIT_DIP_RATIO = 0.3
+
+
+def _split_at_amplitude_dips(notes: list[dict], audio: np.ndarray, sample_rate: int) -> list[dict]:
+    """Split a long note where its loudness drops to near silence mid-note (two repeated same-pitch
+    notes sung legato get merged into one by the pitch model, but the singer re-articulates)."""
+    out: list[dict] = []
+    for note in notes:
+        pending = [note]
+        while pending:
+            n = pending.pop(0)
+            lo, hi = n["onset"] + _SPLIT_EDGE_S, n["offset"] - _SPLIT_EDGE_S
+            if n["duration"] < _SPLIT_MIN_NOTE_S or hi <= lo:
+                out.append(n)
+                continue
+            starts = np.arange(n["onset"], n["offset"], _SPLIT_FRAME_S)
+            rms = np.array([_note_rms(audio, sample_rate, s, s + _SPLIT_FRAME_S) for s in starts])
+            inner = (starts >= lo) & (starts < hi)
+            if not inner.any() or rms[inner].min() >= _SPLIT_DIP_RATIO * np.median(rms):
+                out.append(n)
+                continue
+            cut = round(float(starts[inner][np.argmin(rms[inner])] + _SPLIT_FRAME_S / 2), 4)
+            first = dict(n, offset=cut, duration=round(cut - n["onset"], 4))
+            second = dict(n, onset=cut, duration=round(n["offset"] - cut, 4))
+            # A half that is mostly near-silence is an over-extended tail into a rest, not a note.
+            floor = _SPLIT_DIP_RATIO * np.median(rms)
+            if np.median(rms[starts < cut]) >= floor:
+                out.append(first)
+            if np.median(rms[starts >= cut]) >= floor:
+                pending.insert(0, second)
+    return out
+
+
 def _refine_with_pyin(notes: list[dict], audio: np.ndarray, sample_rate: int) -> list[dict]:
     """Correct each note's pitch and extend its offset using an independent pYIN track, fill in any
     real-singing gap basic-pitch missed entirely, then drop any note left with no independent pitch
@@ -464,7 +552,12 @@ def _refine_with_pyin(notes: list[dict], audio: np.ndarray, sample_rate: int) ->
         voiced_fraction = len(voiced) / total
         corrected_midi = int(round(float(np.median(voiced))))
         disagreement = float(_pitch_class_distance(corrected_midi, note["pitch_midi"]))
-        if _should_correct_note_pitch(voiced_fraction, disagreement):
+        # Steady low backing-track bleed drags pYIN's median an octave below a sung pitch; only
+        # accept a downward octave move if the note's own window has real energy at the lower pitch.
+        bleed_octave = corrected_midi - note["pitch_midi"] <= -11 and not _has_energy_at_lower_pitch(
+            audio, sample_rate, note, corrected_midi
+        )
+        if _should_correct_note_pitch(voiced_fraction, disagreement) and not bleed_octave:
             note["pitch_midi"] = corrected_midi
             note["pitch_hz"] = round(_midi_to_hz(corrected_midi), 2)
 
@@ -602,6 +695,9 @@ def extract_melody(vocal_stem_path: str | Path, output_dir: str | Path) -> Melod
     notes = _collapse_octave_blips(notes)
     notes = _refine_with_pyin(notes, audio, sample_rate)
     notes = _merge_same_pitch_fragments(notes, audio, sample_rate)
+    notes = _split_at_amplitude_dips(notes, audio, sample_rate)
+    # Noise leaves short stray notes that survive merging; real sung notes are longer.
+    notes = [n for n in notes if n["duration"] >= _FINAL_MIN_NOTE_S]
 
     midi_data = pretty_midi.PrettyMIDI()
     instrument = pretty_midi.Instrument(program=0)
