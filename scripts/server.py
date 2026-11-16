@@ -30,7 +30,9 @@ from typing import Literal
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -53,7 +55,7 @@ SCORES_DIR = Path("scores")
 @dataclass
 class Job:
     id: str
-    url: str
+    url: str = Field(min_length=1, pattern=r"\S")
     language: str | None = None
     separation_model: str = "htdemucs"
     status: str = "queued"
@@ -108,14 +110,27 @@ def _lock_for_slug(slug: str) -> threading.Lock:
         return _SLUG_LOCKS.setdefault(slug, threading.Lock())
 
 
+def _read_json(path: Path) -> dict:
+    """Parse a JSON-object file, returning {} when it is unreadable,
+    corrupt, empty, or not an object."""
+    try:
+        data = json.loads(path.read_text())
+    except (ValueError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _song_dir(base: Path, slug: str) -> Path:
     """Resolve `slug` under `base`, rejecting anything (`../etc`, absolute
     paths, etc.) that would resolve outside of it -- the slug in DELETE
     /api/songs/{slug} comes straight from the URL path.
     """
     base_resolved = base.resolve()
-    candidate = (base_resolved / slug).resolve()
-    if candidate.parent != base_resolved:
+    try:
+        candidate = (base_resolved / slug).resolve()
+    except (ValueError, OSError):
+        raise HTTPException(status_code=400, detail="Invalid slug")
+    if candidate.parent != base_resolved or (candidate.exists() and not candidate.is_dir()):  # non-dir: e.g. Windows device NUL
         raise HTTPException(status_code=400, detail="Invalid slug")
     return candidate
 
@@ -129,7 +144,7 @@ def _sync_meta_title(song_cache_dir: Path, title: str) -> None:
     meta_path = song_cache_dir / "meta.json"
     if not meta_path.exists():
         return
-    meta = json.loads(meta_path.read_text())
+    meta = _read_json(meta_path)
     if meta.get("title") != title:
         meta["title"] = title
         meta_path.write_text(json.dumps(meta, indent=2))
@@ -143,7 +158,7 @@ def _cached_separation_model(song_cache_dir: Path) -> str:
     meta_path = song_cache_dir / "meta.json"
     if not meta_path.exists():
         return "htdemucs"
-    meta = json.loads(meta_path.read_text())
+    meta = _read_json(meta_path)
     return meta.get("separation_model", "htdemucs")
 
 
@@ -205,14 +220,21 @@ def _run_job(job: Job) -> None:
 
 
 class CreateJobRequest(BaseModel):
-    url: str
+    url: str = Field(min_length=1, pattern=r"\S")
+
+    @field_validator("url")
+    @classmethod
+    def _no_nul(cls, v: str) -> str:
+        if "\x00" in v:
+            raise ValueError("url must not contain NUL")
+        return v
     language: Literal["en", "yue"] | None = None
     separation_model: Literal["htdemucs", "htdemucs_ft", "bs_roformer"] = "htdemucs"
 
 
 class SubmitScoreRequest(BaseModel):
-    song_id: str
-    score: int
+    song_id: str = Field(max_length=200)
+    score: int = Field(ge=0, le=100)
 
 
 class SetStarredRequest(BaseModel):
@@ -229,6 +251,15 @@ class TransposeRequest(BaseModel):
 
 
 app = FastAPI()
+
+
+@app.exception_handler(RequestValidationError)
+def _validation_error(_request, exc: RequestValidationError) -> JSONResponse:
+    # Drop each error's echoed `input`/`ctx`: a NaN score there cannot be JSON-encoded (was a 500).
+    errors = [{k: v for k, v in e.items() if k not in ("input", "ctx", "url")} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -288,8 +319,8 @@ def list_songs() -> dict:
             starred = False
             meta_path = CACHE_DIR / entry.name / "meta.json"
             if meta_path.exists():
-                meta = json.loads(meta_path.read_text())
-                title = clean_display_title(meta["title"]) if meta.get("title") else entry.name
+                meta = _read_json(meta_path)
+                title = clean_display_title(meta["title"]) if isinstance(meta.get("title"), str) and meta["title"] else entry.name
                 processed_at = meta.get("processed_at")
                 starred = bool(meta.get("starred", False))
             songs.append({
@@ -334,7 +365,7 @@ def set_song_starred(slug: str, request: SetStarredRequest) -> dict:
     cache_dir = _song_dir(CACHE_DIR, slug)
     cache_dir.mkdir(parents=True, exist_ok=True)
     meta_path = cache_dir / "meta.json"
-    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    meta = _read_json(meta_path)
     meta["starred"] = request.starred
     meta_path.write_text(json.dumps(meta, indent=2))
 
@@ -382,6 +413,8 @@ def transpose_song_key(slug: str, request: TransposeRequest) -> dict:
         if not instrumental_path.exists() or not notes_path.exists():
             try:
                 transpose_song(song_dir, request.semitones, transposed_dir)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             except RuntimeError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -414,8 +447,8 @@ def _recording_title(slug: str) -> str:
     """
     meta_path = CACHE_DIR / slug / "meta.json"
     if meta_path.exists():
-        meta = json.loads(meta_path.read_text())
-        if meta.get("title"):
+        meta = _read_json(meta_path)
+        if isinstance(meta.get("title"), str) and meta["title"]:
             return clean_display_title(meta["title"])
     return slug
 
@@ -427,6 +460,10 @@ def _parse_recording_filename(path: Path) -> tuple[str, int] | None:
     """
     slug, separator, epoch_part = path.stem.rpartition("__")
     if not separator or not epoch_part.isdigit():
+        return None
+    try:
+        datetime.fromtimestamp(int(epoch_part), tz=timezone.utc)
+    except (ValueError, OSError, OverflowError):
         return None
     return slug, int(epoch_part)
 
@@ -449,7 +486,10 @@ def _recording_path(filename: str) -> Path:
     `_song_dir` above, since this filename comes straight from a URL path.
     """
     base_resolved = RECORDINGS_DIR.resolve()
-    candidate = (base_resolved / filename).resolve()
+    try:
+        candidate = (base_resolved / filename).resolve()
+    except (ValueError, OSError):
+        raise HTTPException(status_code=400, detail="Invalid filename")
     if candidate.parent != base_resolved:
         raise HTTPException(status_code=400, detail="Invalid filename")
     return candidate
@@ -507,7 +547,9 @@ def render_recording_mp3(
             )
             mp3_path = transcode_to_mp3(mastered_path, Path(tmp_dir))
         except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            # An undecodable upload is the client's fault, not a server failure.
+            status = 422 if "failed to transcode" in str(exc) else 500
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
         shutil.copy(mp3_path, saved_path)
 
     return FileResponse(
@@ -569,7 +611,10 @@ def _score_path(slug: str) -> Path:
     /api/scores request body.
     """
     base_resolved = SCORES_DIR.resolve()
-    candidate = (base_resolved / f"{slug}.json").resolve()
+    try:
+        candidate = (base_resolved / f"{slug}.json").resolve()
+    except (ValueError, OSError):
+        raise HTTPException(status_code=400, detail="Invalid slug")
     if candidate.parent != base_resolved:
         raise HTTPException(status_code=400, detail="Invalid slug")
     return candidate
@@ -594,15 +639,21 @@ def submit_score(request: SubmitScoreRequest) -> dict:
     # racing on scores/<slug>.json has the identical shape of problem.
     with _lock_for_slug(slug):
         if path.exists():
-            record = json.loads(path.read_text())
+            record = _read_json(path)
         else:
-            record = {
-                "slug": slug,
-                "best_score": None,
-                "best_achieved_at": None,
-                "play_count": 0,
-                "last_played_at": None,
-            }
+            record = {}
+        record = {
+            "slug": slug,
+            "best_score": None,
+            "best_achieved_at": None,
+            "play_count": 0,
+            "last_played_at": None,
+            **record,
+        }
+        if not isinstance(record["play_count"], int):
+            record["play_count"] = 0
+        if not isinstance(record["best_score"], (int, float)):
+            record["best_score"] = None
 
         previous_best = record["best_score"]
         is_new_best = previous_best is None or request.score > previous_best
@@ -630,7 +681,7 @@ def list_scores() -> dict:
     if SCORES_DIR.exists():
         for entry in SCORES_DIR.glob("*.json"):
             slug = entry.stem
-            record = json.loads(entry.read_text())
+            record = _read_json(entry)
             scores.append({
                 "slug": slug,
                 "title": _recording_title(slug),
