@@ -306,7 +306,7 @@ function GameScreen() {
     return (
       <main className="game-screen">
         <section className="panel">
-          <h2>Choose a song</h2>
+          <h1>Choose a song</h1>
           <SongLibrary onSelect={selectSong} />
         </section>
       </main>
@@ -326,7 +326,7 @@ function GameScreen() {
         <section className="panel player-panel">
           <div className="player-head">
             <div className="player-head-row">
-              <h2>{songTitle ?? songId}</h2>
+              <h1>{songTitle ?? songId}</h1>
               <div className="mic-controls">
                 {micStatus === 'idle' && (
                   <button type="button" className="btn btn-secondary" onClick={() => void startMic()}>

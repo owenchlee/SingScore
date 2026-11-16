@@ -11,7 +11,7 @@ function LoadSongScreen() {
   return (
     <main className="game-screen">
       <section className="panel">
-        <h2>Load a song</h2>
+        <h1>Load a song</h1>
         <LoadSongForm onLoaded={handleLoaded} />
       </section>
     </main>

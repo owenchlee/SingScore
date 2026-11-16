@@ -89,7 +89,7 @@ function ProofScreen() {
       </p>
 
       <section className="panel">
-        <h2>Playback proof</h2>
+        <h1>Playback proof</h1>
         <div className="button-row">
           <button type="button" className="btn btn-secondary" onClick={playViaAudioElement}>
             Play via &lt;audio&gt;

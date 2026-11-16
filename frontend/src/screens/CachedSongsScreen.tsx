@@ -11,7 +11,7 @@ function CachedSongsScreen() {
   return (
     <main className="game-screen">
       <section className="panel">
-        <h2>Cached songs</h2>
+        <h1>Cached songs</h1>
         <SongLibrary onSelect={handleSelect} />
       </section>
     </main>

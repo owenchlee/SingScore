@@ -38,7 +38,7 @@ function CalibrationScreen() {
       </p>
 
       <section className="panel">
-        <h2>Mic delay calibration</h2>
+        <h1>Mic delay calibration</h1>
         <p className="muted">
           Currently saved correction: <strong>{formatMs(savedOffsetSeconds)}</strong>
           {savedOffsetSeconds === 0 && ' (none yet -- run the calibration below)'}
