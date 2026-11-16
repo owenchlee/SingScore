@@ -152,17 +152,20 @@ def _estimate_start_offset(
     from scipy.signal import find_peaks
 
     peaks, _ = find_peaks(scores)
-    candidates = [p for p in peaks if scores[p] >= 0.8 * peak] or [best_index]
+    candidates = [p for p in peaks if scores[p] >= 0.6 * peak] or [best_index]
     lag_seconds = lags * hop_length / sr
     chosen = min(candidates, key=lambda p: abs(lag_seconds[p] - _RECORDING_OFFSET_SECONDS))
     offset = float(lag_seconds[chosen])
     # Parabolic interpolation through the peak and its neighbours: sub-frame precision, since one
     # onset frame is ~12 ms.
-    if 0 < chosen < len(scores) - 1:
-        left, mid, right = scores[chosen - 1], scores[chosen], scores[chosen + 1]
-        curvature = left - 2 * mid + right
-        if curvature < 0:
-            offset += 0.5 * (left - right) / curvature * hop_length / sr
+    # Centroid of the peak's upper half: steadier than a 3-point parabola on a noisy, broad peak.
+    lo = hi = chosen
+    while lo > 0 and scores[lo - 1] >= 0.6 * scores[chosen] and chosen - lo < 2:
+        lo -= 1
+    while hi < len(scores) - 1 and scores[hi + 1] >= 0.6 * scores[chosen] and hi - chosen < 2:
+        hi += 1
+    w = scores[lo : hi + 1]
+    offset = float(np.dot(w, lag_seconds[lo : hi + 1]) / w.sum())
     return offset
 
 
@@ -193,7 +196,7 @@ def _bleed_offset(y_vocal, y_instrumental, sr: int, max_offset_seconds: float) -
         return None
     # Room reflections arrive after the direct sound and can out-score it, so take the earliest
     # lag that is nearly as strong as the best one: that is the direct speaker-to-mic path.
-    return float((int(np.argmax(window >= 0.8 * peak)) - max_lag) / sr)
+    return float((int(np.argmax(window >= 0.9 * peak)) - max_lag) / sr)
 
 
 _HIGHPASS_HZ = 90
