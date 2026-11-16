@@ -131,9 +131,36 @@ def _normalize_uroman(text: str) -> str:
     return re.sub(r" +", " ", text).strip()
 
 
+_ONES = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+         "fifteen sixteen seventeen eighteen nineteen").split()
+_TENS = "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()
+_SYMBOL_WORDS = {"&": "and", "%": "percent", "+": "plus", "@": "at"}
+
+
+def _number_to_words(n: int) -> str:
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        return _TENS[n // 10] + (" " + _ONES[n % 10] if n % 10 else "")
+    if n < 1000:
+        return _ONES[n // 100] + " hundred" + (" " + _number_to_words(n % 100) if n % 100 else "")
+    if 1000 <= n < 10000 and n % 1000:  # shortcut: years read as two pairs; plain thousands not spelled
+        hi, lo = divmod(n, 100)
+        return _number_to_words(hi) + (" " + (_number_to_words(lo) if lo >= 10 else "oh " + _ONES[lo]) if lo else " hundred")
+    return str(n)
+
+
+def _spell_out(token: str) -> str:
+    """English-only: spell digits and a few symbols as words so the aligner has sounds to time."""
+    token = re.sub(r"\d+", lambda m: f" {_number_to_words(int(m.group()))} ", token)
+    return "".join(f" {_SYMBOL_WORDS[c]} " if c in _SYMBOL_WORDS else c for c in token)
+
+
 def _romanize(tokens: list[str], iso_language: str) -> list[str]:
     romanized = []
     for token in tokens:
+        if iso_language == "eng":
+            token = _spell_out(token)
         normalized = unicodedata.normalize("NFKC", token.strip())
         out = _uroman.romanize_string(normalized, lcode=iso_language)
         out = re.sub(r"\s+", " ", " ".join(out.strip())).strip()
