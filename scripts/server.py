@@ -1,11 +1,12 @@
 """Local job server: lets the frontend load a song straight from a link.
 
-Exposes two endpoints the frontend polls against:
+Exposes endpoints the frontend polls against:
 
-    POST /api/jobs        {"url": "..."}  -> {"job_id": "..."}
-    GET  /api/jobs/{id}   -> {"status": ..., "progress": ..., "slug": ..., "error": ...}
+    POST /api/jobs/upload  multipart file  -> {"job_id": "..."}   (default way to load a song)
+    POST /api/jobs         {"url": "..."}  -> {"job_id": "..."}   (opt-in: SINGSCORE_ENABLE_LINK_DOWNLOAD=1)
+    GET  /api/jobs/{id}    -> {"status": ..., "progress": ..., "slug": ..., "error": ...}
 
-Each job downloads audio from the given URL (yt-dlp), runs it through the
+Each job takes the uploaded file (or downloads audio from the URL via yt-dlp), runs it through the
 existing offline pipeline (separate/extract melody/transcribe lyrics), then
 publishes the result to frontend/public/cache/<slug>/ -- the same steps a
 human would otherwise run by hand via process_song.py + publish_song.py.
@@ -16,6 +17,7 @@ Usage:
     venv/Scripts/python.exe scripts/server.py
 """
 import json
+import os
 import re
 import shutil
 import sys
@@ -51,10 +53,18 @@ RECORDINGS_DIR = Path("recordings")
 SCORES_DIR = Path("scores")
 
 
+# Link download (yt-dlp) is off unless the person running the server opts in: pulling audio from
+# a streaming site can breach that site's terms, so it isn't the default way to load a song.
+LINK_DOWNLOAD_ENABLED = os.environ.get("SINGSCORE_ENABLE_LINK_DOWNLOAD") == "1"
+_MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+
+
 @dataclass
 class Job:
     id: str
-    url: str
+    url: str | None = None
+    upload_path: Path | None = None
+    upload_title: str | None = None
     language: str | None = None
     separation_model: str = "htdemucs"
     status: str = "queued"
@@ -161,19 +171,23 @@ def _run_job(job: Job) -> None:
             job.progress = _overall_progress(stage, fraction)
 
     try:
-        title = probe_title(job.url)
+        title = job.upload_title or probe_title(job.url)
         slug = slugify(title)
 
         on_progress("queued")
         with _lock_for_slug(slug):
-            on_progress("downloading")
+            if job.upload_path is None:
+                on_progress("downloading")
 
             if _needs_reprocessing(slug, job.separation_model):
                 with tempfile.TemporaryDirectory() as tmp_dir:
-                    downloaded_path, title = download_audio(
-                        job.url, Path(tmp_dir),
-                        on_progress=lambda fraction: on_progress("downloading", fraction),
-                    )
+                    if job.upload_path is not None:
+                        downloaded_path = job.upload_path
+                    else:
+                        downloaded_path, title = download_audio(
+                            job.url, Path(tmp_dir),
+                            on_progress=lambda fraction: on_progress("downloading", fraction),
+                        )
                     slug = slugify(title)
                     # Re-check against the *real* (downloaded) title's slug -- probe_title's
                     # guess and the real title can differ, and each has its own cache entry.
@@ -204,6 +218,9 @@ def _run_job(job: Job) -> None:
         with job.lock:
             job.status = "error"
             job.error = str(exc)
+    finally:
+        if job.upload_path is not None:  # the uploaded copy is only needed while processing
+            shutil.rmtree(job.upload_path.parent, ignore_errors=True)
 
 
 class CreateJobRequest(BaseModel):
@@ -239,8 +256,56 @@ app.add_middleware(
 )
 
 
+@app.get("/api/capabilities")
+def get_capabilities() -> dict:
+    return {"link_download": LINK_DOWNLOAD_ENABLED}
+
+
+@app.post("/api/jobs/upload")
+def create_upload_job(
+    file: UploadFile = File(...),
+    language: Literal["en", "yue", ""] = Form(""),
+    separation_model: Literal["htdemucs", "htdemucs_ft", "bs_roformer"] = Form("htdemucs"),
+) -> dict:
+    title = Path(file.filename or "").stem.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="The file needs a name")
+    suffix = re.sub(r"[^A-Za-z0-9.]", "", Path(file.filename).suffix)[:8]
+
+    upload_dir = Path(tempfile.mkdtemp(prefix="singscore-upload-"))
+    upload_path = upload_dir / f"source{suffix}"
+    size = 0
+    with upload_path.open("wb") as out:
+        while chunk := file.file.read(1024 * 1024):
+            size += len(chunk)
+            if size > _MAX_UPLOAD_BYTES:
+                out.close()
+                shutil.rmtree(upload_dir, ignore_errors=True)
+                raise HTTPException(status_code=413, detail="File is over the 500 MB limit")
+            out.write(chunk)
+    if size == 0:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail="The uploaded file is empty")
+
+    job_id = uuid.uuid4().hex
+    job = Job(
+        id=job_id, upload_path=upload_path, upload_title=title,
+        language=language or None, separation_model=separation_model,
+    )
+    _JOBS[job_id] = job
+    threading.Thread(target=_run_job, args=(job,), daemon=True).start()
+    return {"job_id": job_id}
+
+
 @app.post("/api/jobs")
 def create_job(request: CreateJobRequest) -> dict:
+    if not LINK_DOWNLOAD_ENABLED:
+        raise HTTPException(
+            status_code=403,
+            detail="Loading from a link is off. Upload an audio file instead, or start the "
+                   "server with SINGSCORE_ENABLE_LINK_DOWNLOAD=1 if you accept the source "
+                   "site's terms.",
+        )
     job_id = uuid.uuid4().hex
     job = Job(
         id=job_id, url=request.url, language=request.language,

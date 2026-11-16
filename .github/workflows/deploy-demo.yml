@@ -6,9 +6,9 @@ name: Deploy public demo
 # redistribution -- never the .gitignored frontend/public/cache/ that accumulates whatever's
 # been processed locally.
 #
-# Auto-deploy is disabled: the demo-cache catalog is currently empty (no vetted song), so
-# there's nothing worth publishing. Run manually via workflow_dispatch once a demo song/video
-# is ready.
+# Auto-deploy is disabled on purpose: publishing is a deliberate step. The demo-cache holds three
+# Josh Woodward songs (CC BY 4.0, credited in the app and THIRD_PARTY_LICENSES.md). Run this via
+# workflow_dispatch once the license check noted in THIRD_PARTY_LICENSES.md is done.
 on:
   workflow_dispatch: {}
 

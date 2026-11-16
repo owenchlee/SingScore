@@ -157,8 +157,25 @@ function SongLibrary({ onSelect, refreshKey }: SongLibraryProps) {
           )
         })}
       </ul>
+      {DEMO_MODE && (
+        <div className="muted form-hint">
+          {DEMO_CREDIT_TITLES.map((title) => (
+            <p key={title}>
+              Music - "{title}" by Josh Woodward. Free download:{' '}
+              <a href="https://www.joshwoodward.com/">https://www.joshwoodward.com/</a>
+            </p>
+          ))}
+          <p>
+            Licensed under{' '}
+            <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>. Modified: the
+            vocals were removed and the melody and lyrics were charted automatically by SingScore.
+          </p>
+        </div>
+      )}
     </div>
   )
 }
+
+const DEMO_CREDIT_TITLES = ['Border Blaster', 'Private Hurricane', 'Stars Collide']
 
 export default SongLibrary
