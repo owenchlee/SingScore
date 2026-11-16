@@ -41,3 +41,8 @@ frontend/dist/
 
 # Git worktrees used for isolated feature-branch work
 .worktrees/
+
+# local secrets
+.env
+.env.*
+!.env.example
