@@ -26,7 +26,7 @@ export function sanitizeWords(words: LyricWord[]): LyricWord[] {
     // An exact repeat (same text and times) is one sung word listed twice; showing both doubles it.
     .filter((w, i, all) => !all.slice(0, i).some((p) => p.start === w.start && p.end === w.end && p.word === w.word))
   return sorted.map((word, i) => {
-    const next = sorted.slice(i + 1).find((w) => w.start > word.start)
+    const next = sorted[i + 1]
     // Keep a few frames of life so a word cut short by a close-following one is still seen.
     return next && next.start < word.end ? { ...word, end: Math.min(word.end, Math.max(next.start, word.start + 0.04)) } : word
   })
