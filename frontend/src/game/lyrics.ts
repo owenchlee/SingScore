@@ -20,9 +20,10 @@ export const MUSIC_NOTE = '♪'
  * segment that silently spans dead air) called it the same line as its neighbor.
  */
 export function sanitizeWords(words: LyricWord[]): LyricWord[] {
-  const sorted = [...words].sort((a, b) => a.start - b.start)
+  // Ties on start sort shortest first so each of them gets its own turn as the active word.
+  const sorted = [...words].sort((a, b) => a.start - b.start || a.end - b.end)
   return sorted.map((word, i) => {
-    const next = sorted[i + 1]
+    const next = sorted.slice(i + 1).find((w) => w.start > word.start)
     return next && next.start < word.end ? { ...word, end: next.start } : word
   })
 }
