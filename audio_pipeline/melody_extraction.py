@@ -297,7 +297,9 @@ _GAP_REPAIR_MIN_RELATIVE_RMS = 0.5
 def _pyin_track(audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, np.ndarray]:
     """Independent monophonic pitch track: per-frame time and MIDI pitch (NaN where unvoiced)."""
     f0, voiced_flag, _voiced_prob = librosa.pyin(
-        audio, fmin=_PYIN_FMIN_HZ, fmax=_PYIN_FMAX_HZ, sr=sample_rate, hop_length=_PYIN_HOP_LENGTH
+        audio, fmin=_PYIN_FMIN_HZ, fmax=_PYIN_FMAX_HZ, sr=sample_rate, hop_length=_PYIN_HOP_LENGTH,
+        # Viterbi cost grows with states squared; only per-note median pitch is used downstream.
+        resolution=0.25,
     )
     times = librosa.times_like(f0, sr=sample_rate, hop_length=_PYIN_HOP_LENGTH)
     midi = np.where(voiced_flag, librosa.hz_to_midi(f0), np.nan)
