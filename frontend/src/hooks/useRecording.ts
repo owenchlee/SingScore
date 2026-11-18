@@ -59,6 +59,8 @@ export function useRecording({ audioRef, micStreamRef, songId }: UseRecordingOpt
   // starts once both blobs are complete.
   const stoppedCountRef = useRef(0)
   const downloadUrlRef = useRef<string | null>(null)
+  // Tears down the current take's source/destination graph (the element source stays cached).
+  const disconnectTakeRef = useRef<(() => void) | null>(null)
 
   const revokeDownloadUrl = useCallback(() => {
     if (downloadUrlRef.current) {
@@ -133,10 +135,17 @@ export function useRecording({ audioRef, micStreamRef, songId }: UseRecordingOpt
     }
 
     const vocalDestination = context.createMediaStreamDestination()
-    context.createMediaStreamSource(micStream).connect(vocalDestination)
+    const micSource = context.createMediaStreamSource(micStream)
+    micSource.connect(vocalDestination)
 
     const instrumentalDestination = context.createMediaStreamDestination()
     elementSource.connect(instrumentalDestination)
+    const sharedElementSource = elementSource
+    disconnectTakeRef.current = () => {
+      micSource.disconnect()
+      sharedElementSource.disconnect(instrumentalDestination)
+      disconnectTakeRef.current = null
+    }
 
     const mimeType = MediaRecorder.isTypeSupported(PREFERRED_MIME_TYPE) ? PREFERRED_MIME_TYPE : undefined
     const vocalRecorder = new MediaRecorder(vocalDestination.stream, mimeType ? { mimeType } : undefined)
@@ -155,7 +164,10 @@ export function useRecording({ audioRef, micStreamRef, songId }: UseRecordingOpt
 
     const onEitherStop = () => {
       stoppedCountRef.current += 1
-      if (stoppedCountRef.current === 2) void renderMp3()
+      if (stoppedCountRef.current === 2) {
+        disconnectTakeRef.current?.()
+        void renderMp3()
+      }
     }
     vocalRecorder.onstop = onEitherStop
     instrumentalRecorder.onstop = onEitherStop
@@ -194,6 +206,25 @@ export function useRecording({ audioRef, micStreamRef, songId }: UseRecordingOpt
   }, [revokeDownloadUrl])
 
   useEffect(() => revokeDownloadUrl, [revokeDownloadUrl])
+
+  useEffect(
+    () => () => {
+      for (const recorder of [vocalRecorderRef.current, instrumentalRecorderRef.current]) {
+        if (!recorder) continue
+        // Detach handlers so the stop does not trigger an upload/setState after unmount.
+        recorder.onstop = null
+        recorder.onerror = null
+        recorder.ondataavailable = null
+        if (recorder.state !== 'inactive') recorder.stop()
+      }
+      disconnectTakeRef.current?.()
+      elementSourceRef.current?.disconnect()
+      elementSourceRef.current = null
+      void audioContextRef.current?.close()
+      audioContextRef.current = null
+    },
+    [],
+  )
 
   return { status, downloadUrl, downloadFilename, errorMessage, start, stop, reset }
 }
