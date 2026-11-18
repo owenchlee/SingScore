@@ -74,7 +74,7 @@ export function createSmoothClock(): SmoothClock {
     // Close the gap by speeding up or slowing down slightly, never by stepping, so output only moves forward.
     const slew = Math.max(-advance * MAX_SLEW, Math.min(advance * MAX_SLEW, owed))
     owed -= slew
-    const out = Math.min(predicted + slew, lastReading + Math.max(MAX_LEAD_SECONDS, refreshGap * 1.25 * playbackRate))
+    const out = Math.min(predicted + slew, lastReading + Math.max(MAX_LEAD_SECONDS, refreshGap * 2 * playbackRate))
     lastOut = Math.max(lastOut, out)
     return lastOut
   }
