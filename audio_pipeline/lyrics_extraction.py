@@ -188,6 +188,8 @@ def _flatten_words(segments: list[Segment], hotwords: str | None = None) -> list
 _CHUNK_SECONDS = 50.0
 _CHUNK_OVERLAP_SECONDS = 5.0
 _CHUNK_CORE_SECONDS = _CHUNK_SECONDS - 2 * _CHUNK_OVERLAP_SECONDS
+_SEAM_MARGIN_SECONDS = 0.25
+_SEAM_DEDUPE_SECONDS = 0.15  # > cross-window jitter, < a real repeated word
 
 
 def _transcribe_chunked(
@@ -239,7 +241,9 @@ def _transcribe_chunked(
     words: list[dict] = []
     next_line = -1
     core_start = 0.0
+    chunk_index = -1
     while core_start < total_seconds:
+        chunk_index += 1
         core_end = min(core_start + _CHUNK_CORE_SECONDS, total_seconds)
         is_last_chunk = core_end >= total_seconds
         pad_start = max(0.0, core_start - _CHUNK_OVERLAP_SECONDS)
@@ -257,12 +261,26 @@ def _transcribe_chunked(
         chunk_words = _flatten_words(list(segments), hotwords=hotwords)
 
         last_chunk_line = None
+        seam_count = len(words)  # only words kept from earlier windows can be seam duplicates
         for word in chunk_words:
             absolute_start = round(word["start"] + pad_start, 4)
             absolute_end = round(word["end"] + pad_start, 4)
-            in_core = absolute_start >= core_start and (is_last_chunk or absolute_start < core_end)
+            # Midpoint plus a seam margin: the same word gets jittered timestamps in two windows,
+            # so a hard cut could lose it from both; the seam dedupe below drops the double.
+            mid = (absolute_start + absolute_end) / 2
+            in_core = (mid >= core_start - _SEAM_MARGIN_SECONDS
+                       and (is_last_chunk or mid < core_end + _SEAM_MARGIN_SECONDS))
             if not in_core:
                 continue
+            if chunk_index and any(
+                _normalize_word(word["word"]) == _normalize_word(w["word"])
+                and abs(absolute_start - w["start"]) < _SEAM_DEDUPE_SECONDS
+                for w in words[max(0, seam_count - 3):seam_count]
+            ):
+                continue  # same word already kept from the previous window
+            if words and absolute_start < words[-1]["end"]:
+                absolute_start = words[-1]["end"]
+                absolute_end = max(absolute_end, absolute_start)
             if word["line"] != last_chunk_line:
                 next_line += 1
                 last_chunk_line = word["line"]
@@ -439,14 +457,23 @@ def _repair_energetic_gaps(
                 recovered_norm = _normalize_word(recovered["word"])
                 duplicates_prev = (
                     recovered_norm == _normalize_word(prev_word["word"])
-                    and abs(absolute_start - prev_word["start"]) < 1.0
+                    and abs(absolute_start - prev_word["start"]) < _SEAM_DEDUPE_SECONDS
                 )
                 duplicates_next = (
                     recovered_norm == _normalize_word(word["word"])
-                    and abs(absolute_start - word["start"]) < 1.0
+                    and abs(absolute_start - word["start"]) < _SEAM_DEDUPE_SECONDS
                 )
                 if duplicates_prev or duplicates_next:
                     continue  # the anchor word itself, re-detected -- already in the list
+                if any(
+                    recovered_norm == _normalize_word(w["word"]) and abs(absolute_start - w["start"]) < _SEAM_DEDUPE_SECONDS
+                    for w in repaired[-5:]
+                ):
+                    continue  # a word sung just before the gap, re-detected
+                if absolute_start < repaired[-1]["start"] or absolute_end > word["start"] + 0.1:
+                    continue  # out of order against a kept word
+                absolute_start = max(absolute_start, repaired[-1]["end"])  # clamp jitter overlap
+                absolute_end = max(absolute_end, absolute_start)
                 repaired.append(
                     {"word": recovered["word"], "start": absolute_start, "end": absolute_end, "line": prev_word["line"]}
                 )
