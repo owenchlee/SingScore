@@ -11,7 +11,8 @@ const SNAP_THRESHOLD_SECONDS = 0.25
 // Fraction of the gap to a fresh audio reading that gets closed per update. Small enough that the
 // bars don't visibly step when a reading lands, large enough that any real drift is gone in well
 // under a second.
-const CORRECTION_GAIN = 0.15
+const MAX_REFRESH_GAP_SECONDS = 0.2
+const MAX_SLEW = 0.1
 // If the audio clock stops advancing while it still reports playing (buffering), the prediction
 // would otherwise keep running ahead of the audio indefinitely.
 const MAX_LEAD_SECONDS = 0.1
@@ -24,43 +25,57 @@ export type SmoothClock = (
 ) => number
 
 export function createSmoothClock(): SmoothClock {
-  let anchorAudioTime: number | null = null
-  let anchorFrameMs = 0
+  let lastOut: number | null = null
+  let lastFrameMs = 0
   let lastRawAudioTime = Number.NaN
+  // Seconds the output still has to gain (or lose) to match the latest audio reading.
+  let owed = 0
+  let lastReading = 0
+  let lastReadingFrameMs = 0
+  // Observed gap between fresh readings: a coarse clock legitimately goes this long without one.
+  let refreshGap = 0
 
   return (audioTimeSeconds, frameTimeMs, isPlaying, playbackRate = 1) => {
     if (!isPlaying) {
-      // Paused/ended: nothing is advancing, so there's nothing to interpolate -- report the real
-      // position and start fresh when playback resumes.
-      anchorAudioTime = null
+      lastOut = null
       lastRawAudioTime = audioTimeSeconds
       return audioTimeSeconds
     }
 
-    if (anchorAudioTime === null) {
-      anchorAudioTime = audioTimeSeconds
-      anchorFrameMs = frameTimeMs
+    if (lastOut === null) {
+      lastOut = audioTimeSeconds
+      lastFrameMs = frameTimeMs
       lastRawAudioTime = audioTimeSeconds
+      lastReading = audioTimeSeconds
+      lastReadingFrameMs = frameTimeMs
+      owed = 0
       return audioTimeSeconds
     }
 
-    const predicted = anchorAudioTime + ((frameTimeMs - anchorFrameMs) / 1000) * playbackRate
+    const advance = Math.max(0, ((frameTimeMs - lastFrameMs) / 1000) * playbackRate)
+    lastFrameMs = frameTimeMs
+    const predicted = lastOut + advance
 
-    if (audioTimeSeconds === lastRawAudioTime) {
-      return Math.min(predicted, audioTimeSeconds + MAX_LEAD_SECONDS)
+    if (audioTimeSeconds !== lastRawAudioTime) {
+      lastRawAudioTime = audioTimeSeconds
+      const gap = (frameTimeMs - lastReadingFrameMs) / 1000
+      if (gap < MAX_REFRESH_GAP_SECONDS) refreshGap = gap
+      lastReadingFrameMs = frameTimeMs
+      lastReading = audioTimeSeconds
+      const error = audioTimeSeconds - predicted
+      if (Math.abs(error) > SNAP_THRESHOLD_SECONDS) {
+        lastOut = audioTimeSeconds
+        owed = 0
+        return audioTimeSeconds
+      }
+      owed = error
     }
-    lastRawAudioTime = audioTimeSeconds
 
-    const error = audioTimeSeconds - predicted
-    if (Math.abs(error) > SNAP_THRESHOLD_SECONDS) {
-      anchorAudioTime = audioTimeSeconds
-      anchorFrameMs = frameTimeMs
-      return audioTimeSeconds
-    }
-
-    const corrected = predicted + error * CORRECTION_GAIN
-    anchorAudioTime = corrected
-    anchorFrameMs = frameTimeMs
-    return corrected
+    // Close the gap by speeding up or slowing down slightly, never by stepping, so output only moves forward.
+    const slew = Math.max(-advance * MAX_SLEW, Math.min(advance * MAX_SLEW, owed))
+    owed -= slew
+    const out = Math.min(predicted + slew, lastReading + Math.max(MAX_LEAD_SECONDS, refreshGap * 1.25 * playbackRate))
+    lastOut = Math.max(lastOut, out)
+    return lastOut
   }
 }
