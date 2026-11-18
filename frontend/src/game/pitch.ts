@@ -91,5 +91,9 @@ export function smoothMidi(midiValues: number[]): number | null {
   if (midiValues.length === 0) return null
   const sorted = [...midiValues].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+  const hi = sorted[mid]
+  if (hi === undefined) return null
+  if (sorted.length % 2 !== 0) return hi
+  const lo = sorted[mid - 1]
+  return lo === undefined ? null : (lo + hi) / 2
 }

@@ -17,7 +17,7 @@ export function parseContentDispositionFilename(header: string | null): string |
   if (!header) return null
 
   const extended = header.match(/filename\*=utf-8''([^;]+)/i)
-  if (extended) {
+  if (extended?.[1] !== undefined) {
     try {
       return decodeURIComponent(extended[1])
     } catch {
@@ -26,7 +26,7 @@ export function parseContentDispositionFilename(header: string | null): string |
   }
 
   const plain = header.match(/filename="?([^";]+)"?/)
-  return plain ? plain[1] : null
+  return plain?.[1] ?? null
 }
 
 /** Newest-first by `recorded_at`. Unlike songs' `processed_at`, every
