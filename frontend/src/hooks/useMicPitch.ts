@@ -54,6 +54,9 @@ export function useMicPitch(audioRef: RefObject<HTMLAudioElement | null>) {
   const analyserRef = useRef<AnalyserNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const rafRef = useRef<number | null>(null)
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  // Bumped by every start()/stop() so a getUserMedia that resolves after leaving or after a newer start() is discarded.
+  const sessionRef = useRef(0)
   // Read once per mic session (not per-sample) -- a fresh calibration only takes effect the next
   // time the mic is (re)started, same as any other one-time setup value.
   const calibrationOffsetSecondsRef = useRef(0)
@@ -67,12 +70,16 @@ export function useMicPitch(audioRef: RefObject<HTMLAudioElement | null>) {
   const latencySecondsRef = useRef(0)
 
   const stop = () => {
+    sessionRef.current++
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
     }
     streamRef.current?.getTracks().forEach((track) => track.stop())
     streamRef.current = null
+    sourceRef.current?.disconnect()
+    sourceRef.current = null
+    analyserRef.current?.disconnect()
     analyserRef.current = null
     latestSampleRef.current = null
     latencySecondsRef.current = 0
@@ -80,6 +87,7 @@ export function useMicPitch(audioRef: RefObject<HTMLAudioElement | null>) {
   }
 
   const start = async () => {
+    const session = ++sessionRef.current
     setStatus('requesting')
     try {
       // `echoCancellation` was previously forced on here so speaker bleed wouldn't get read as
@@ -91,13 +99,19 @@ export function useMicPitch(audioRef: RefObject<HTMLAudioElement | null>) {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true },
       })
+      if (session !== sessionRef.current) {
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
       streamRef.current = stream
 
       const context = audioContextRef.current ?? new AudioContext()
       audioContextRef.current = context
       const analyser = context.createAnalyser()
       analyser.fftSize = FFT_SIZE
-      context.createMediaStreamSource(stream).connect(analyser)
+      const source = context.createMediaStreamSource(stream)
+      source.connect(analyser)
+      sourceRef.current = source
       analyserRef.current = analyser
 
       const detector = PitchDetector.forFloat32Array(analyser.fftSize)
@@ -143,11 +157,18 @@ export function useMicPitch(audioRef: RefObject<HTMLAudioElement | null>) {
       }
       tick()
     } catch {
-      setStatus('denied')
+      if (session === sessionRef.current) setStatus('denied')
     }
   }
 
-  useEffect(() => stop, [])
+  useEffect(
+    () => () => {
+      stop()
+      void audioContextRef.current?.close()
+      audioContextRef.current = null
+    },
+    [],
+  )
 
   return { status, start, stop, latestSampleRef, streamRef, latencySecondsRef }
 }
