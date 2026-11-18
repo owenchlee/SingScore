@@ -22,11 +22,11 @@ import { findActiveNoteIndex } from '../game/scoring'
 // the likely source of the pill visibly lagging real singing (median smoothing lags a pitch
 // change by up to about half this window). Shrinking it trims that lag while still resisting
 // single-frame outliers over a ~9-sample window at the ~60fps detection rate.
-const SMOOTHING_WINDOW_SECONDS = 0.15
+const SMOOTHING_WINDOW_SECONDS = 0.1
 const MAX_SAMPLE_AGE_SECONDS = 0.15
 const HOLD_SECONDS = 0.6
 // Consecutive agreeing samples needed before a jump beyond the plausible limit is believed.
-const JUMP_CONFIRM_SAMPLES = 3
+const JUMP_CONFIRM_SAMPLES = 2
 // How often the human-readable display state is allowed to re-render -- the underlying computation
 // runs every animation frame (for the canvas pill), but text doesn't need 60fps churn.
 const DISPLAY_UPDATE_INTERVAL_MS = 100
