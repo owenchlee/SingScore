@@ -251,8 +251,9 @@ function GameScreen() {
       const score = getFinalScore()
       setFinalScore(score)
 
-      // No job server on the static demo build to persist scores against.
-      if (DEMO_MODE) return
+      // No job server on the static demo build to persist scores against. Nothing to judge
+      // without a mic or notes, so don't save those plays either.
+      if (DEMO_MODE || micStatus !== 'active' || notes.length === 0) return
 
       fetch('/api/scores', {
         method: 'POST',
@@ -268,12 +269,14 @@ function GameScreen() {
     }
 
     audio.addEventListener('play', handlePlay)
+    audio.addEventListener('seeked', handlePlay) // scrubbing back to the start is a new attempt
     audio.addEventListener('ended', handleEnded)
     return () => {
       audio.removeEventListener('play', handlePlay)
+      audio.removeEventListener('seeked', handlePlay)
       audio.removeEventListener('ended', handleEnded)
     }
-  }, [loadState, songId, resetScoring, getFinalScore])
+  }, [loadState, songId, resetScoring, getFinalScore, micStatus, notes])
 
   useEffect(() => {
     if (!debug) return
