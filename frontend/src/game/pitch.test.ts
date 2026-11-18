@@ -5,6 +5,7 @@ import {
   foldToNearestOctave,
   hzToMidi,
   isPlausiblePitchJump,
+  isPlausibleSungHz,
   signedCentsOff,
   smoothMidi,
 } from './pitch'
@@ -146,5 +147,14 @@ describe('appendTracePoint', () => {
       { time: 0.9, midi: 61 },
       { time: 2, midi: 62 },
     ])
+  })
+})
+
+describe('isPlausibleSungHz', () => {
+  it('rejects kick/bass bleed and accepts sung range', () => {
+    expect(isPlausibleSungHz(50)).toBe(false)
+    expect(isPlausibleSungHz(80)).toBe(true)
+    expect(isPlausibleSungHz(1000)).toBe(true)
+    expect(isPlausibleSungHz(3000)).toBe(false)
   })
 })
