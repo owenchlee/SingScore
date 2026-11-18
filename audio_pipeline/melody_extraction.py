@@ -307,7 +307,7 @@ def _pyin_track(audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, np.nda
     f0, voiced_flag, _voiced_prob = librosa.pyin(
         audio, fmin=_PYIN_FMIN_HZ, fmax=_PYIN_FMAX_HZ, sr=sample_rate, hop_length=hop, frame_length=frame,
         # Viterbi cost grows with states squared; only per-note median pitch is used downstream.
-        resolution=0.25,
+        resolution=0.5,
     )
     times = librosa.times_like(f0, sr=sample_rate, hop_length=hop)
     midi = np.where(voiced_flag, librosa.hz_to_midi(f0), np.nan)
