@@ -13,6 +13,8 @@ const SNAP_THRESHOLD_SECONDS = 0.25
 // under a second.
 const MAX_REFRESH_GAP_SECONDS = 0.2
 const MAX_SLEW = 0.1
+// Absolute per-frame cap so a long (dropped-frame) advance never turns the slew into a visible step.
+const MAX_SLEW_PER_FRAME_SECONDS = 0.005
 // If the audio clock stops advancing while it still reports playing (buffering), the prediction
 // would otherwise keep running ahead of the audio indefinitely.
 const MAX_LEAD_SECONDS = 0.1
@@ -72,7 +74,8 @@ export function createSmoothClock(): SmoothClock {
     }
 
     // Close the gap by speeding up or slowing down slightly, never by stepping, so output only moves forward.
-    const slew = Math.max(-advance * MAX_SLEW, Math.min(advance * MAX_SLEW, owed))
+    const maxSlew = Math.min(advance * MAX_SLEW, MAX_SLEW_PER_FRAME_SECONDS)
+    const slew = Math.max(-maxSlew, Math.min(maxSlew, owed))
     owed -= slew
     const out = Math.min(predicted + slew, lastReading + Math.max(MAX_LEAD_SECONDS, refreshGap * 2 * playbackRate))
     lastOut = Math.max(lastOut, out)
