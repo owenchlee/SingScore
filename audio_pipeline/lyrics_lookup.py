@@ -14,6 +14,7 @@ alignment. Callers should fall back to local transcription
 (``lyrics_extraction.extract_lyrics``) when this returns ``None``.
 """
 import re
+import unicodedata
 
 import requests
 
@@ -186,7 +187,9 @@ _CJK_RE = re.compile("[一-鿿]")
 
 _CJK_LINE_TOKEN_RE = re.compile(r"[A-Za-z0-9'’]+|\S")
 
-_WORD_RE = re.compile(r"[a-z0-9]+")
+# Latin/digit runs stay whole words; CJK/kana/hangul have no spaces so each character is a word.
+_WORD_RE = re.compile(r"[a-z0-9]+|[぀-ヿ㐀-鿿가-힯]")
+_ARTIST_STOPWORDS = frozenset({"the", "a", "an", "and", "of", "feat", "ft"})
 
 # lrclib's plain-text lines routinely include the backing/ad-lib vocal alongside the lead line
 # (e.g. "that I fell for you (mm-hmm)"), or as an entire line of its own (e.g. "(I hope it's worth
@@ -264,7 +267,10 @@ def _search(params: dict[str, str]) -> list[dict] | None:
 
 
 def _words(text: str) -> set[str]:
-    return set(_WORD_RE.findall(text.lower()))
+    # Fold accents (Beyoncé -> beyonce), read "!" as "i" (P!nk -> pink), drop apostrophes (Car's -> cars).
+    folded = unicodedata.normalize("NFKD", text.lower().replace("!", "i"))
+    folded = "".join(c for c in folded if not unicodedata.combining(c))
+    return set(_WORD_RE.findall(re.sub(r"['’]", "", folded)))
 
 
 # lrclib's search endpoint does a loose full-text match across track/artist/album text, not a
@@ -280,9 +286,17 @@ def _words(text: str) -> set[str]:
 # ("(Official Video)", "[Lyrics]", etc.) that a strict equality check would break on.
 def _artist_matches_query(candidate: dict, query_words: set[str]) -> bool:
     artist_words = _words(candidate.get("artistName") or "")
+    artist_words = (artist_words - _ARTIST_STOPWORDS) or artist_words
     if not artist_words or not query_words:
         return True  # nothing to check the query against -- don't reject on missing metadata
     return not artist_words.isdisjoint(query_words)
+
+
+def _title_matches_query(candidate: dict, query_words: set[str]) -> bool:
+    # Every word of the candidate's own track title must appear in the query (so another song by
+    # the same artist is rejected); brackets/feat are stripped so "(Taylor's Version)" etc. are fine.
+    title_words = _words(_strip_feat(_strip_noise_brackets(candidate.get("trackName") or "")))
+    return not title_words or not query_words or title_words <= query_words
 
 
 def _pick_best_synced_lyrics(
@@ -307,7 +321,9 @@ def _pick_best_synced_lyrics(
         )
     query_words = _words(query) if query else set()
     for candidate in candidates:
-        if not _artist_matches_query(candidate, query_words):
+        if not _artist_matches_query(candidate, query_words) or not _title_matches_query(
+            candidate, query_words
+        ):
             continue
         lyrics = candidate["syncedLyrics"]
         if is_mostly_supported_script(lyrics):
