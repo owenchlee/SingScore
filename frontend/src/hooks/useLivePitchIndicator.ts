@@ -28,7 +28,7 @@ const HOLD_SECONDS = 0.6
 // Consecutive agreeing samples needed before a jump beyond the plausible limit is believed.
 const JUMP_CONFIRM_SAMPLES = 2
 // Max semitone step from the singer's own last pitch accepted without confirmation (tuned empirically).
-const OWN_PITCH_JUMP_SEMITONES = 4.5
+const OWN_PITCH_JUMP_SEMITONES = 4.25
 // How often the human-readable display state is allowed to re-render -- the underlying computation
 // runs every animation frame (for the canvas pill), but text doesn't need 60fps churn.
 const DISPLAY_UPDATE_INTERVAL_MS = 100
