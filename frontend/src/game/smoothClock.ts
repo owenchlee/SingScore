@@ -64,7 +64,8 @@ export function createSmoothClock(): SmoothClock {
       if (gap < MAX_REFRESH_GAP_SECONDS) refreshGap = gap
       lastReadingFrameMs = frameTimeMs
       lastReading = audioTimeSeconds
-      const error = audioTimeSeconds - predicted
+      // A reading is first seen up to one frame after it refreshed, so it is on average half a frame stale.
+      const error = audioTimeSeconds + advance / 2 - predicted
       if (Math.abs(error) > SNAP_THRESHOLD_SECONDS) {
         lastOut = audioTimeSeconds
         owed = 0
