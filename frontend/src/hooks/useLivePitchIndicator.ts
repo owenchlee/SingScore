@@ -23,7 +23,7 @@ import { findActiveNoteIndex } from '../game/scoring'
 // change by up to about half this window). Shrinking it trims that lag while still resisting
 // single-frame outliers over a ~9-sample window at the ~60fps detection rate.
 const SMOOTHING_WINDOW_SECONDS = 0.025
-const MAX_SAMPLE_AGE_SECONDS = 0.08
+const MAX_SAMPLE_AGE_SECONDS = 0.06
 const HOLD_SECONDS = 0.6
 // Consecutive agreeing samples needed before a jump beyond the plausible limit is believed.
 const JUMP_CONFIRM_SAMPLES = 2
