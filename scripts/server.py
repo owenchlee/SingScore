@@ -601,7 +601,14 @@ def render_recording_mp3(
     recorded_at = datetime.now(timezone.utc)
     epoch_seconds = int(recorded_at.timestamp())
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    saved_path = RECORDINGS_DIR / f"{slug}__{epoch_seconds}.mp3"
+    # Same-second takes bump the epoch so they never overwrite; "x" mode reserves atomically.
+    while True:
+        saved_path = RECORDINGS_DIR / f"{slug}__{epoch_seconds}.mp3"
+        try:
+            saved_path.open("xb").close()
+            break
+        except FileExistsError:
+            epoch_seconds += 1
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         vocal_path = Path(tmp_dir) / "vocal.webm"
