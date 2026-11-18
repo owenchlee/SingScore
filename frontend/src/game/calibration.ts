@@ -27,17 +27,19 @@ export function pairBeatsToTaps(
   for (const beat of beatTimes) {
     let bestIndex = -1
     let bestDistance = Infinity
-    for (let i = 0; i < tapTimes.length; i++) {
+    let bestTap = 0
+    for (const [i, tap] of tapTimes.entries()) {
       if (usedTapIndices.has(i)) continue
-      const distance = Math.abs(tapTimes[i] - beat)
+      const distance = Math.abs(tap - beat)
       if (distance < bestDistance) {
         bestDistance = distance
         bestIndex = i
+        bestTap = tap
       }
     }
     if (bestIndex !== -1 && bestDistance <= maxMatchWindowSeconds) {
       usedTapIndices.add(bestIndex)
-      offsets.push(tapTimes[bestIndex] - beat)
+      offsets.push(bestTap - beat)
     }
   }
 
@@ -92,7 +94,9 @@ const SPREAD_TIE_EPSILON = 1e-9
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+  return sorted.length % 2 === 0
+    ? ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2
+    : (sorted[mid] ?? 0)
 }
 
 /** Estimates one latency for the whole run instead of pairing each beat with its nearest tap: once
