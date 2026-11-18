@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
+from urllib.parse import urlsplit
 from fastapi.responses import FileResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -279,12 +279,16 @@ def _validation_error(_request, exc: RequestValidationError) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": errors})
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+@app.middleware("http")
+async def _reject_foreign_origin(request, call_next):
+    # No CORS: the Vite proxy makes /api same-origin. Block any other site from writing or reading.
+    origin = request.headers.get("origin")
+    if origin is not None:
+        parsed = urlsplit(origin)
+        local = parsed.hostname in ("localhost", "127.0.0.1", "::1")
+        if not local and parsed.netloc != request.headers.get("host"):
+            return JSONResponse(status_code=403, content={"detail": "Cross-origin request blocked"})
+    return await call_next(request)
 
 
 @app.get("/api/capabilities")
