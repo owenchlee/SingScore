@@ -8,6 +8,7 @@ song already processed is never reprocessed unnecessarily.
 import hashlib
 import json
 import re
+import shutil
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -264,6 +265,8 @@ def process_song(
     melody.notes_path.replace(final_notes_path)
     lyrics.lyrics_path.replace(final_lyrics_path)
 
+    # Key-changed variants were rendered from the old notes/instrumental.
+    shutil.rmtree(song_cache_dir / "transposed", ignore_errors=True)
     meta_path = song_cache_dir / _META_FILENAME
     # Re-read at write time so user fields (e.g. "starred") survive re-processing.
     try:
@@ -325,6 +328,8 @@ def reprocess_melody_and_lyrics(
     melody.notes_path.replace(final_notes_path)
     lyrics.lyrics_path.replace(final_lyrics_path)
 
+    # Key-changed variants were rendered from the old notes/instrumental.
+    shutil.rmtree(song_cache_dir / "transposed", ignore_errors=True)
     meta_path = song_cache_dir / _META_FILENAME
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {"song_id": song_id}
     meta["processed_at"] = datetime.now(timezone.utc).isoformat()
