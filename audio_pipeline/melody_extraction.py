@@ -297,11 +297,11 @@ _GAP_REPAIR_MIN_RELATIVE_RMS = 0.5
 
 def _pyin_track(audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, np.ndarray]:
     """Independent monophonic pitch track: per-frame time and MIDI pitch (NaN where unvoiced)."""
-    # Halve the rate (same frame times and analysis window in seconds); the top pitch is ~2 kHz.
-    if sample_rate % 2 == 0 and sample_rate >= 32000:
-        audio = scipy.signal.resample_poly(audio, 1, 2).astype(np.float32)
-        sample_rate //= 2
-        hop, frame = _PYIN_HOP_LENGTH // 2, 1024
+    # Quarter the rate (same frame times and analysis window in seconds); the top pitch is ~2 kHz.
+    if sample_rate % 4 == 0 and sample_rate >= 32000:
+        audio = scipy.signal.resample_poly(audio, 1, 4).astype(np.float32)
+        sample_rate //= 4
+        hop, frame = _PYIN_HOP_LENGTH // 4, 512
     else:
         hop, frame = _PYIN_HOP_LENGTH, 2048
     f0, voiced_flag, _voiced_prob = librosa.pyin(
