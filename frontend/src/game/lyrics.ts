@@ -21,7 +21,10 @@ export const MUSIC_NOTE = '♪'
  */
 export function sanitizeWords(words: LyricWord[]): LyricWord[] {
   // Ties on start sort shortest first so each of them gets its own turn as the active word.
-  const sorted = [...words].sort((a, b) => a.start - b.start || a.end - b.end)
+  const sorted = [...words]
+    .sort((a, b) => a.start - b.start || a.end - b.end)
+    // An exact repeat (same text and times) is one sung word listed twice; showing both doubles it.
+    .filter((w, i, all) => !all.slice(0, i).some((p) => p.start === w.start && p.end === w.end && p.word === w.word))
   return sorted.map((word, i) => {
     const next = sorted.slice(i + 1).find((w) => w.start > word.start)
     return next && next.start < word.end ? { ...word, end: next.start } : word
