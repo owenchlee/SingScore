@@ -264,13 +264,19 @@ def process_song(
     melody.notes_path.replace(final_notes_path)
     lyrics.lyrics_path.replace(final_lyrics_path)
 
-    meta = {
+    meta_path = song_cache_dir / _META_FILENAME
+    # Re-read at write time so user fields (e.g. "starred") survive re-processing.
+    try:
+        meta = json.loads(meta_path.read_text())
+    except (OSError, ValueError):
+        meta = {}
+    meta.update({
         "source_file": str(video_path),
         "song_id": slug,
         "processed_at": datetime.now(timezone.utc).isoformat(),
         "separation_model": separation_model,
-    }
-    (song_cache_dir / _META_FILENAME).write_text(json.dumps(meta, indent=2))
+    })
+    meta_path.write_text(json.dumps(meta, indent=2))
 
     return SongAssets(
         instrumental_path=final_instrumental_path,
