@@ -131,7 +131,7 @@ export function useLivePitchIndicator({ audioRef, notes, latestSampleRef }: UseL
           pendingRef.current = null
         } else {
           const pending = pendingRef.current
-          const count = pending && Math.abs(pending.midi - foldedMidi) <= 3 ? pending.count + 1 : 1
+          const count = pending && Math.abs(pending.midi - foldedMidi) <= 4 ? pending.count + 1 : 1
           pendingRef.current = { midi: foldedMidi, count }
           if (count >= JUMP_CONFIRM_SAMPLES) {
             accept = true
