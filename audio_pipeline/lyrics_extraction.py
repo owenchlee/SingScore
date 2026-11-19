@@ -83,11 +83,9 @@ class LyricsResult:
     background_vocal_ranges: list[tuple[float, float]] = field(default_factory=list)
 
 
-_WHITESPACE_RE = re.compile(r"\s+")
-
-
 def _normalize_for_leak_check(text: str) -> str:
-    return _WHITESPACE_RE.sub("", text).lower()
+    # Letters and digits only: drops whitespace, punctuation, symbols, emoji, zero-width chars.
+    return "".join(c for c in text.lower() if c.isalnum())
 
 
 # Long enough that it can't be a coincidental single CJK particle or short common word shared
@@ -117,7 +115,14 @@ def _is_hotword_leakage(segment_text: str, hotwords: str | None) -> bool:
     candidate = _normalize_for_leak_check(segment_text)
     if len(candidate) < _MIN_LEAK_MATCH_CHARS:
         return False
-    return candidate in _normalize_for_leak_check(hotwords)
+    # Only the whole hint or a leading run of whole hint words (the artist comes first) is an echo;
+    # a sung line that merely is part of the title is real lyrics.
+    prefix = ""
+    for word in hotwords.split():
+        prefix += _normalize_for_leak_check(word)
+        if prefix == candidate:
+            return True
+    return False
 
 
 def _flatten_words(segments: list[Segment], hotwords: str | None = None) -> list[dict]:
