@@ -24,6 +24,9 @@ _ALLOWED_TEXT_PATTERN = re.compile(
     r"㐀-䶿"  # CJK Unified Ideographs Extension A
     r"一-鿿"  # CJK Unified Ideographs (Cantonese)
     r"＀-￯"  # fullwidth forms
+    "¡-¿"  # Latin-1 punctuation (inverted marks, guillemets, middle dot)
+    "̀-ͯ"  # combining diacritics (NFD accented Latin)
+    "\U00020000-\U0003134F"  # CJK Extensions B-G (rare Cantonese characters)
     r"]"
 )
 
