@@ -41,8 +41,16 @@ export function useScoring({ audioRef, notes, latestSampleRef, active }: UseScor
     let rafId: number
 
     const tick = () => {
-      const currentTime = audioRef.current?.currentTime ?? 0
+      const audio = audioRef.current
+      const currentTime = audio?.currentTime ?? 0
       const sample = latestSampleRef.current
+
+      // A paused/ended clock is frozen, so the last sample never goes stale and would be recounted
+      // every frame (and anything sung while paused would be scored).
+      if (audio && (audio.paused || audio.ended)) {
+        rafId = requestAnimationFrame(tick)
+        return
+      }
 
       // Staleness is judged against `capturedAt`, not the calibration-corrected `time` -- see the
       // note above `bufferLatencySeconds` in `useMicPitch.ts`. The note a fresh sample is judged
@@ -50,7 +58,7 @@ export function useScoring({ audioRef, notes, latestSampleRef, active }: UseScor
       // + mic/calibration latency has elapsed, so the note active "right now" has often already
       // scrolled past the moment the singer actually produced it -- see the matching note in
       // `useLivePitchIndicator.ts`.
-      if (sample && currentTime - sample.capturedAt <= STALE_SAMPLE_SECONDS) {
+      if (sample && Math.abs(currentTime - sample.capturedAt) <= STALE_SAMPLE_SECONDS) {
         const noteIndex = findActiveNoteIndex(notes, sample.time)
         const note = notes[noteIndex]
         // A missing note or accuracy slot (arrays out of step) counts as an empty tally.
