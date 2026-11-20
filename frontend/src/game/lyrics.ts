@@ -19,8 +19,22 @@ export const MUSIC_NOTE = '♪'
  * enough real-time gap always splits into its own line even if the source data (e.g. a Whisper
  * segment that silently spans dead air) called it the same line as its neighbor.
  */
-export function withInstrumentalBreaks(words: LyricWord[]): DisplayWord[] {
-  if (words.length === 0) return []
+export function sanitizeWords(words: LyricWord[]): LyricWord[] {
+  // Ties on start sort shortest first so each of them gets its own turn as the active word.
+  const sorted = [...words]
+    .sort((a, b) => a.start - b.start || a.end - b.end)
+    // An exact repeat (same text and times) is one sung word listed twice; showing both doubles it.
+    .filter((w, i, all) => !all.slice(0, i).some((p) => p.start === w.start && p.end === w.end && p.word === w.word))
+  return sorted.map((word, i) => {
+    const next = sorted[i + 1]
+    // Keep a few frames of life so a word cut short by a close-following one is still seen.
+    return next && next.start < word.end ? { ...word, end: Math.min(word.end, Math.max(next.start, word.start + 0.04)) } : word
+  })
+}
+
+export function withInstrumentalBreaks(input: LyricWord[]): DisplayWord[] {
+  if (input.length === 0) return []
+  const words = sanitizeWords(input)
 
   const result: DisplayWord[] = []
   let line = 0
@@ -62,10 +76,10 @@ const MAX_MERGED_LINE_WORDS = 20
  * actual instrumental gap -- a one-word line boxed in by music on both sides is left standing
  * alone as a legitimate short interjection rather than force-merged into something distant.
  */
-export function mergeSingleWordLines(words: LyricWord[]): LyricWord[] {
-  if (words.length === 0) return []
+export function mergeSingleWordLines(input: LyricWord[]): LyricWord[] {
+  if (input.length === 0) return []
 
-  const lines = groupWordsByLine(words).filter((line): line is LyricWord[] => line.length > 0)
+  const lines = groupWordsByLine(sanitizeWords(input)).filter((line): line is LyricWord[] => line.length > 0)
 
   let i = 0
   while (i < lines.length) {

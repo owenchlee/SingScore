@@ -19,19 +19,30 @@ interface LyricsDisplayProps {
 const ACTIVE_CLASS = 'lyric-word--active'
 const SUNG_CLASS = 'lyric-word--sung'
 
-function LyricsLine({ words, role }: { words: DisplayWord[] | undefined; role: 'prev' | 'current' | 'next' }) {
+function LyricsLine({
+  words,
+  all,
+  role,
+}: {
+  words: DisplayWord[] | undefined
+  all: DisplayWord[]
+  role: 'prev' | 'current' | 'next'
+}) {
   return (
     <div className={`lyric-line lyric-line--${role}`}>
       {words
-        ? words.map((word) => (
+        ? words.map((word) => {
+            const index = all.indexOf(word)
+            return (
             <span
-              key={word.start}
-              data-word-start={word.start}
+              key={index}
+              data-word-index={index}
               className={`lyric-word${word.isInstrumental ? ' lyric-word--instrumental' : ''}`}
             >
               <span className="lyric-word__fill">{word.word}</span>
             </span>
-          ))
+            )
+          })
         : ' '}
     </div>
   )
@@ -63,19 +74,18 @@ function LyricsDisplay({ audioRef, words }: LyricsDisplayProps) {
         const lineIndex = getCurrentLineIndex(displayWords, currentTime)
         setCurrentLineIndex((previous) => (previous === lineIndex ? previous : lineIndex))
 
-        const activeWord = wordIndex === -1 ? undefined : displayWords[wordIndex]
         // Re-tag every visible word rather than just the one word that
         // changed, so seeking backward (which can move the active word
         // earlier than words already marked "sung") corrects itself instead
         // of leaving stale accent-colored text ahead of the playhead.
         const elements = wrapperRef.current?.querySelectorAll<HTMLElement>('.lyric-word') ?? []
         elements.forEach((el) => {
-          const start = Number(el.dataset.wordStart)
+          const index = Number(el.dataset.wordIndex)
           el.classList.remove(ACTIVE_CLASS, SUNG_CLASS)
           el.querySelector<HTMLElement>('.lyric-word__fill')?.style.removeProperty('--progress')
-          if (!activeWord || start < activeWord.start) {
+          if (wordIndex === -1 || index < wordIndex) {
             el.classList.add(SUNG_CLASS)
-          } else if (start === activeWord.start) {
+          } else if (index === wordIndex) {
             el.classList.add(ACTIVE_CLASS)
             activeElRef.current = el
             activeFillElRef.current = el.querySelector<HTMLElement>('.lyric-word__fill')
@@ -99,9 +109,9 @@ function LyricsDisplay({ audioRef, words }: LyricsDisplayProps) {
 
   return (
     <div ref={wrapperRef} className="lyrics-display">
-      <LyricsLine words={lines[currentLineIndex - 1]} role="prev" />
-      <LyricsLine words={lines[currentLineIndex]} role="current" />
-      <LyricsLine words={lines[currentLineIndex + 1]} role="next" />
+      <LyricsLine all={displayWords} words={lines[currentLineIndex - 1]} role="prev" />
+      <LyricsLine all={displayWords} words={lines[currentLineIndex]} role="current" />
+      <LyricsLine all={displayWords} words={lines[currentLineIndex + 1]} role="next" />
     </div>
   )
 }
