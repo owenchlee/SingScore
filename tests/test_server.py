@@ -882,3 +882,10 @@ def test_run_job_reports_real_progress_and_reaches_1_on_success(tmp_path, monkey
     assert job.status == "done"
     assert job.progress == 1.0
     assert job.slug == "my-song"
+
+
+def test_foreign_origin_is_rejected_but_local_and_originless_pass():
+    assert client.get("/api/capabilities", headers={"Origin": "https://evil.example"}).status_code == 403
+    assert client.get("/api/capabilities", headers={"Origin": "null"}).status_code == 403
+    assert client.get("/api/capabilities", headers={"Origin": "http://localhost:5173"}).status_code == 200
+    assert client.get("/api/capabilities").status_code == 200
