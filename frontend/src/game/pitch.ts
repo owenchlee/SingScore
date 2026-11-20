@@ -97,3 +97,12 @@ export function smoothMidi(midiValues: number[]): number | null {
   const lo = sorted[mid - 1]
   return lo === undefined ? null : (lo + hi) / 2
 }
+
+/** Lowest/highest fundamental accepted as singing. E2 (82 Hz) minus vibrato is ~78 Hz; anything lower is
+ * speaker bleed (kick, bass guitar). The upper bound is above a soprano high C plus headroom. */
+export const MIN_SUNG_HZ = 75
+export const MAX_SUNG_HZ = 1400
+
+export function isPlausibleSungHz(hz: number): boolean {
+  return hz >= MIN_SUNG_HZ && hz <= MAX_SUNG_HZ
+}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { PitchDetector } from 'pitchy'
-import { hzToMidi } from '../game/pitch'
+import { hzToMidi, isPlausibleSungHz } from '../game/pitch'
 import { loadCalibrationOffsetSeconds } from '../game/calibration'
 
 export type MicStatus = 'idle' | 'requesting' | 'active' | 'denied'
@@ -128,7 +128,7 @@ export function useMicPitch(audioRef: RefObject<HTMLAudioElement | null>) {
         if (currentAnalyser) {
           currentAnalyser.getFloatTimeDomainData(buffer)
           const [hz, clarity] = detector.findPitch(buffer, context.sampleRate)
-          if (hz > 0 && clarity >= CLARITY_THRESHOLD && rms(buffer) >= MIN_RMS) {
+          if (isPlausibleSungHz(hz) && clarity >= CLARITY_THRESHOLD && rms(buffer) >= MIN_RMS) {
             const songTimeNow = audioRef.current?.currentTime ?? 0
             latestSampleRef.current = {
               time: songTimeNow - bufferLatencySeconds - calibrationOffsetSecondsRef.current,
