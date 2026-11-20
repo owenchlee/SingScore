@@ -844,3 +844,13 @@ def test_extract_lyrics_falls_back_to_transcription_when_lookup_finds_nothing(tm
     mock_fetch.assert_called_once()
     words = json.loads(result.lyrics_path.read_text())
     assert isinstance(words, list)
+
+
+def test_hotword_leakage_only_matches_whole_hint_or_leading_words():
+    from audio_pipeline.lyrics_extraction import _is_hotword_leakage
+
+    hint = "Adele When We Were Young"
+    assert _is_hotword_leakage("Adele, When We Were Young.", hint)
+    assert _is_hotword_leakage("adele", hint)
+    assert not _is_hotword_leakage("When we were young", hint)
+    assert _is_hotword_leakage("dhruv double take", "dhruv \u200bdouble take")
