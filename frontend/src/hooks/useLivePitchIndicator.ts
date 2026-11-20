@@ -22,9 +22,13 @@ import { findActiveNoteIndex } from '../game/scoring'
 // the likely source of the pill visibly lagging real singing (median smoothing lags a pitch
 // change by up to about half this window). Shrinking it trims that lag while still resisting
 // single-frame outliers over a ~9-sample window at the ~60fps detection rate.
-const SMOOTHING_WINDOW_SECONDS = 0.15
-const MAX_SAMPLE_AGE_SECONDS = 0.15
+const SMOOTHING_WINDOW_SECONDS = 0.025
+const MAX_SAMPLE_AGE_SECONDS = 0.03
 const HOLD_SECONDS = 0.6
+// Consecutive agreeing samples needed before a jump beyond the plausible limit is believed.
+const JUMP_CONFIRM_SAMPLES = 2
+// Max semitone step from the singer's own last pitch accepted without confirmation (tuned empirically).
+const OWN_PITCH_JUMP_SEMITONES = 4.25
 // How often the human-readable display state is allowed to re-render -- the underlying computation
 // runs every animation frame (for the canvas pill), but text doesn't need 60fps churn.
 const DISPLAY_UPDATE_INTERVAL_MS = 100
@@ -83,6 +87,7 @@ export function useLivePitchIndicator({ audioRef, notes, latestSampleRef }: UseL
 
   const traceRef = useRef<TracePoint[]>([])
   const octaveAnchorRef = useRef<number | null>(null)
+  const pendingRef = useRef<{ midi: number; count: number } | null>(null)
   const rafRef = useRef<number | null>(null)
   const lastDisplayUpdateRef = useRef<number>(0)
 
@@ -117,7 +122,24 @@ export function useLivePitchIndicator({ audioRef, notes, latestSampleRef }: UseL
         const anchor = activeNote ? activeNote.pitch_midi : (octaveAnchorRef.current ?? sample.midi)
         const foldedMidi = foldIntoRange(foldToNearestOctave(sample.midi, anchor), pitchRange)
 
-        if (noAnchorEstablishedYet || isPlausiblePitchJump(anchor, foldedMidi)) {
+        // Plausibility is judged against the singer's own last accepted pitch (not the target), so an
+        // off-key singer is still shown. A big jump is accepted only once a few consecutive samples
+        // agree on it; isolated octave/fifth glitches never repeat, so they are dropped.
+        const own = octaveAnchorRef.current
+        let accept = noAnchorEstablishedYet || own === null || isPlausiblePitchJump(own, foldedMidi, OWN_PITCH_JUMP_SEMITONES)
+        if (accept) {
+          pendingRef.current = null
+        } else {
+          const pending = pendingRef.current
+          const count = pending && Math.abs(pending.midi - foldedMidi) <= 4 ? pending.count + 1 : 1
+          pendingRef.current = { midi: foldedMidi, count }
+          if (count >= JUMP_CONFIRM_SAMPLES) {
+            accept = true
+            pendingRef.current = null
+            traceRef.current = []
+          }
+        }
+        if (accept) {
           octaveAnchorRef.current = foldedMidi
           traceRef.current = appendTracePoint(
             traceRef.current,
@@ -133,6 +155,7 @@ export function useLivePitchIndicator({ audioRef, notes, latestSampleRef }: UseL
         smoothedMidi = smoothMidi(traceRef.current.map((point) => point.midi))
       } else if (!hasRecentVoicing) {
         octaveAnchorRef.current = null
+        pendingRef.current = null
         traceRef.current = []
       }
 
