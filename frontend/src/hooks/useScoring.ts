@@ -31,10 +31,15 @@ export function useScoring({ audioRef, notes, latestSampleRef, active }: UseScor
     setRunningScore(100)
   }, [notes])
 
-  // A new song (different notes array) starts with a clean scorecard.
+  // A new song starts with a clean scorecard. A transposed variant of the same song has identical
+  // note timings, so a key change mid-song keeps the score earned so far.
+  const timingKey = notes.map((n) => `${n.onset}-${n.offset}`).join(',')
+  const timingKeyRef = useRef(timingKey)
   useEffect(() => {
+    if (timingKeyRef.current === timingKey) return
+    timingKeyRef.current = timingKey
     reset()
-  }, [reset])
+  }, [timingKey, reset])
 
   useEffect(() => {
     if (!active) return

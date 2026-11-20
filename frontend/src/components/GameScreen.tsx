@@ -141,11 +141,29 @@ function GameScreen() {
   // request needed. Guards against out-of-order responses (e.g. the +/- buttons clicked faster
   // than a request can resolve) with a request-id token -- only the most recently issued request's
   // result is ever applied.
+  // Swapping the <audio> src reloads it (stops, back to 0:00), so remember where the player was and
+  // put them back once the new file's metadata arrives.
+  const keepPlaceAcrossSrcSwap = useCallback(() => {
+    const audio = audioRef.current
+    if (!audio || (audio.currentTime === 0 && audio.paused)) return
+    const time = audio.currentTime
+    const wasPlaying = !audio.paused
+    audio.addEventListener(
+      'loadedmetadata',
+      () => {
+        audio.currentTime = time
+        if (wasPlaying) void audio.play().catch(() => {})
+      },
+      { once: true },
+    )
+  }, [])
+
   const applyKeyShift = useCallback(
     async (shift: number) => {
       const requestId = ++transposeRequestIdRef.current
 
       if (shift === 0) {
+        keepPlaceAcrossSrcSwap()
         setNotes(baseNotesRef.current)
         setInstrumentalUrl(null)
         setSemitoneShift(0)
@@ -168,6 +186,7 @@ function GameScreen() {
         const shiftedNotes = await fetchJson<NoteEvent[]>(notes_url)
 
         if (transposeRequestIdRef.current !== requestId) return // superseded by a newer request
+        keepPlaceAcrossSrcSwap()
         setNotes(shiftedNotes)
         setInstrumentalUrl(instrumental_url)
         setSemitoneShift(shift)
@@ -177,7 +196,7 @@ function GameScreen() {
         setKeyChangeStatus('error')
       }
     },
-    [songId],
+    [songId, keepPlaceAcrossSrcSwap],
   )
 
   // Drives `keyChangeProgress` off elapsed time against the estimate above rather than any signal
