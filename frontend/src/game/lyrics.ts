@@ -70,6 +70,9 @@ export function mergeSingleWordLines(words: LyricWord[]): LyricWord[] {
   let i = 0
   while (i < lines.length) {
     const line = lines[i]
+    const first = line?.[0]
+    const last = line?.at(-1)
+    if (!line || !first || !last) break
     if (line.length >= MIN_LINE_WORDS || lines.length === 1) {
       i++
       continue
@@ -77,8 +80,10 @@ export function mergeSingleWordLines(words: LyricWord[]): LyricWord[] {
 
     const previous = lines[i - 1]
     const next = lines[i + 1]
-    const gapToPrevious = previous ? line[0].start - previous[previous.length - 1].end : Infinity
-    const gapToNext = next ? next[0].start - line[line.length - 1].end : Infinity
+    const previousLast = previous?.at(-1)
+    const nextFirst = next?.[0]
+    const gapToPrevious = previousLast ? first.start - previousLast.end : Infinity
+    const gapToNext = nextFirst ? nextFirst.start - last.end : Infinity
     const previousFits =
       previous !== undefined &&
       gapToPrevious < INSTRUMENTAL_GAP_SECONDS &&
@@ -145,6 +150,5 @@ export function groupWordsByLine<T extends LyricWord>(words: T[]): T[][] {
 export function getCurrentLineIndex(words: LyricWord[], currentTime: number): number {
   if (words.length === 0) return -1
   const wordIndex = getCurrentWordIndex(words, currentTime)
-  if (wordIndex === -1) return words[words.length - 1].line
-  return words[wordIndex].line
+  return words[wordIndex === -1 ? words.length - 1 : wordIndex]?.line ?? -1
 }

@@ -64,8 +64,11 @@ export function songAccuracyScore(
 ): number {
   if (notes.length === 0) return 100
   let missed = 0
-  for (let i = 0; i < notes.length; i++) {
-    if (notes[i].offset <= currentTime && !isNoteHit(accuracies[i])) missed++
+  for (const [i, note] of notes.entries()) {
+    if (note.offset > currentTime) continue
+    const accuracy = accuracies[i]
+    // A missing accuracy (stale or short array) counts as not hit.
+    if (!accuracy || !isNoteHit(accuracy)) missed++
   }
   return Math.round(100 - (missed / notes.length) * 100)
 }

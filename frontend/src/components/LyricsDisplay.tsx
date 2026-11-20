@@ -86,7 +86,7 @@ function LyricsDisplay({ audioRef, words }: LyricsDisplayProps) {
 
       if (activeFillElRef.current && activeWordIndexRef.current !== -1) {
         const activeWord = displayWords[activeWordIndexRef.current]
-        const progress = getWordProgress(activeWord, currentTime)
+        const progress = activeWord ? getWordProgress(activeWord, currentTime) : 0
         activeFillElRef.current.style.setProperty('--progress', `${(progress * 100).toFixed(2)}%`)
       }
 

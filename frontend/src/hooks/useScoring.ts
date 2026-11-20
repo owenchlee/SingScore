@@ -52,9 +52,14 @@ export function useScoring({ audioRef, notes, latestSampleRef, active }: UseScor
       // `useLivePitchIndicator.ts`.
       if (sample && currentTime - sample.capturedAt <= STALE_SAMPLE_SECONDS) {
         const noteIndex = findActiveNoteIndex(notes, sample.time)
-        if (noteIndex !== -1) {
-          const isHit = isPitchMatch(sample.midi, notes[noteIndex].pitch_midi)
-          accuraciesRef.current[noteIndex] = recordSample(accuraciesRef.current[noteIndex], isHit)
+        const note = notes[noteIndex]
+        // A missing note or accuracy slot (arrays out of step) counts as an empty tally.
+        if (noteIndex !== -1 && note) {
+          const isHit = isPitchMatch(sample.midi, note.pitch_midi)
+          accuraciesRef.current[noteIndex] = recordSample(
+            accuraciesRef.current[noteIndex] ?? { hitCount: 0, totalCount: 0 },
+            isHit,
+          )
         }
       }
 

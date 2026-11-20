@@ -30,11 +30,12 @@ export const DEFAULT_PAST_BUFFER_SECONDS = 0.5
  * in any absolute sense. `getPitchAxisTicks`/`midiToNoteName` exist so the UI can label gridlines
  * with real note names, making that relative-vs-absolute distinction visible instead of implicit. */
 export function getPitchRange(notes: NoteEvent[]): PitchRange {
-  if (notes.length === 0) {
+  const first = notes[0]
+  if (!first) {
     return DEFAULT_PITCH_RANGE
   }
-  let min = notes[0].pitch_midi
-  let max = notes[0].pitch_midi
+  let min = first.pitch_midi
+  let max = first.pitch_midi
   for (const note of notes) {
     if (note.pitch_midi < min) min = note.pitch_midi
     if (note.pitch_midi > max) max = note.pitch_midi

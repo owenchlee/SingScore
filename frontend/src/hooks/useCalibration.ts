@@ -116,11 +116,11 @@ export function useCalibration(): UseCalibrationResult {
       setStatus('running')
 
       schedulerIntervalRef.current = window.setInterval(() => {
-        while (
-          nextBeatIndex < beatTimes.length &&
-          beatTimes[nextBeatIndex] < context.currentTime + SCHEDULE_AHEAD_SECONDS
+        for (
+          let beatTime = beatTimes[nextBeatIndex];
+          beatTime !== undefined && beatTime < context.currentTime + SCHEDULE_AHEAD_SECONDS;
+          beatTime = beatTimes[nextBeatIndex]
         ) {
-          const beatTime = beatTimes[nextBeatIndex]
           const oscillator = context.createOscillator()
           const gain = context.createGain()
           oscillator.frequency.value = CLICK_FREQUENCY_HZ

@@ -107,7 +107,7 @@ export function useLivePitchIndicator({ audioRef, notes, latestSampleRef }: UseL
       // `currentTime` when there's no fresh sample to anchor against.
       const noteLookupTime = sample && sampleAge <= MAX_SAMPLE_AGE_SECONDS ? sample.time : currentTime
       const activeNoteIndex = findActiveNoteIndex(notes, noteLookupTime)
-      const activeNote = activeNoteIndex !== -1 ? notes[activeNoteIndex] : null
+      const activeNote = activeNoteIndex !== -1 ? (notes[activeNoteIndex] ?? null) : null
 
       if (sample && sampleAge <= MAX_SAMPLE_AGE_SECONDS) {
         // See NoteHighway's git history for the reasoning: fold toward the note actually being
