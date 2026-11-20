@@ -60,8 +60,14 @@ export function useCalibration(): UseCalibrationResult {
   const schedulerIntervalRef = useRef<number | null>(null)
   const rafRef = useRef<number | null>(null)
   const finishTimeoutRef = useRef<number | null>(null)
+  const nodesRef = useRef<AudioNode[]>([])
+  // Bumped by every cleanup()/start() so a getUserMedia that resolves after cancel/unmount/a newer start is discarded.
+  const sessionRef = useRef(0)
 
   const cleanup = useCallback(() => {
+    sessionRef.current++
+    nodesRef.current.forEach((node) => node.disconnect())
+    nodesRef.current = []
     if (schedulerIntervalRef.current !== null) {
       window.clearInterval(schedulerIntervalRef.current)
       schedulerIntervalRef.current = null
@@ -85,6 +91,7 @@ export function useCalibration(): UseCalibrationResult {
 
   const start = useCallback(async () => {
     cleanup()
+    const session = sessionRef.current
     setStatus('requesting-mic')
     setBeatsScheduled(0)
     setTapsDetected(0)
@@ -94,6 +101,10 @@ export function useCalibration(): UseCalibrationResult {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })
+      if (session !== sessionRef.current) {
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
       streamRef.current = stream
 
       const context = audioContextRef.current ?? new AudioContext()
@@ -101,7 +112,9 @@ export function useCalibration(): UseCalibrationResult {
 
       const analyser = context.createAnalyser()
       analyser.fftSize = CLAP_FFT_SIZE
-      context.createMediaStreamSource(stream).connect(analyser)
+      const source = context.createMediaStreamSource(stream)
+      source.connect(analyser)
+      nodesRef.current = [source, analyser]
       const buffer = new Float32Array(analyser.fftSize)
 
       const startTime = context.currentTime + LEAD_IN_SECONDS
@@ -157,12 +170,20 @@ export function useCalibration(): UseCalibrationResult {
         setStatus('done')
       }, totalDurationSeconds * 1000)
     } catch {
+      if (session !== sessionRef.current) return
       cleanup()
       setStatus('error')
     }
   }, [cleanup])
 
-  useEffect(() => cleanup, [cleanup])
+  useEffect(
+    () => () => {
+      cleanup()
+      void audioContextRef.current?.close()
+      audioContextRef.current = null
+    },
+    [cleanup],
+  )
 
   return { status, beatsScheduled, totalBeats: BEAT_COUNT, tapsDetected, result, start, cancel }
 }
