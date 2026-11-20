@@ -412,11 +412,13 @@ def delete_song(slug: str) -> dict:
     public_dir = _song_dir(PUBLIC_DIR, slug)
     if not public_dir.exists():
         raise HTTPException(status_code=404, detail="Unknown song")
-    shutil.rmtree(public_dir)
+    # Same lock transpose_song_key renders under, so a delete waits out a key change.
+    with _lock_for_slug(f"{slug}:transpose"):
+        shutil.rmtree(public_dir)
 
-    cache_dir = _song_dir(CACHE_DIR, slug)
-    if cache_dir.exists():
-        shutil.rmtree(cache_dir)
+        cache_dir = _song_dir(CACHE_DIR, slug)
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
 
     return {"deleted": slug}
 
@@ -481,13 +483,24 @@ def transpose_song_key(slug: str, request: TransposeRequest) -> dict:
     if request.semitones != 0:
         transposed_dir = _transposed_dir(slug, request.semitones)
         instrumental_path, notes_path = _transpose_asset_paths(slug, request.semitones)
-        if not instrumental_path.exists() or not notes_path.exists():
-            try:
-                transpose_song(song_dir, request.semitones, transposed_dir)
-            except ValueError as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
-            except RuntimeError as exc:
-                raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # One render per (slug, key); a second request waits, then sees the cache hit.
+        with _lock_for_slug(f"{slug}:transpose"):
+            if not song_dir.exists():
+                raise HTTPException(status_code=404, detail="Unknown song")
+            if not instrumental_path.exists() or not notes_path.exists():
+                # Render beside the final dir, then rename, so readers never see a partial file.
+                tmp_dir = transposed_dir.with_name(f"{transposed_dir.name}.tmp")
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                try:
+                    transpose_song(song_dir, request.semitones, tmp_dir)
+                    shutil.rmtree(transposed_dir, ignore_errors=True)
+                    os.replace(tmp_dir, transposed_dir)
+                except ValueError as exc:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                except RuntimeError as exc:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                    raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {
         "instrumental_url": f"/api/songs/{slug}/transpose/{request.semitones}/instrumental.wav",
@@ -605,7 +618,14 @@ def render_recording_mp3(
     recorded_at = datetime.now(timezone.utc)
     epoch_seconds = int(recorded_at.timestamp())
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    saved_path = RECORDINGS_DIR / f"{slug}__{epoch_seconds}.mp3"
+    # Same-second takes bump the epoch so they never overwrite; "x" mode reserves atomically.
+    while True:
+        saved_path = RECORDINGS_DIR / f"{slug}__{epoch_seconds}.mp3"
+        try:
+            saved_path.open("xb").close()
+            break
+        except FileExistsError:
+            epoch_seconds += 1
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         vocal_path = Path(tmp_dir) / "vocal.webm"
