@@ -96,12 +96,15 @@ def normalize_loudness(
             raise RuntimeError(f"ffmpeg failed to normalize loudness of {input_path}: {stderr_text}") from exc
 
     render(gain_db)
-    # The limiter shaves loudness off peaky material; add the shortfall back once.
-    try:
-        shortfall = target_i - float(measure_loudness(output_path, target_i)["input_i"])
-    except (RuntimeError, TypeError, ValueError):
-        shortfall = 0.0
-    if 0.2 < shortfall < 3.0:
-        render(gain_db + shortfall)
+    # The limiter shaves loudness off peaky material; add the shortfall back (twice at most).
+    for _ in range(2):
+        try:
+            shortfall = target_i - float(measure_loudness(output_path, target_i)["input_i"])
+        except (RuntimeError, TypeError, ValueError):
+            break
+        if not 0.1 < shortfall < 3.0:
+            break
+        gain_db += shortfall
+        render(gain_db)
 
     return output_path
