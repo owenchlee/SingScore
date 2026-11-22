@@ -73,22 +73,18 @@ def normalize_loudness(
             raise RuntimeError(f"ffmpeg failed to resample {input_path}: {stderr_text}") from exc
         return output_path
 
+    # loudnorm silently falls back to dynamic mode (squashing verses vs choruses)
+    # when linear gain would break the peak ceiling. Apply the plain linear gain
+    # ourselves and let a limiter catch only the peaks.
+    gain_db = target_i - float(stats["input_i"])
+    # alimiter limit is linear sample peak; keep ~1 dB margin below the TP ceiling
+    # for inter-sample peaks. shortcut: sample-peak limiter, not true-peak.
+    limit = 10 ** ((_LOUDNORM_TP - 1.0) / 20)
     try:
         (
             ffmpeg.input(str(input_path))
-            .filter(
-                "loudnorm",
-                i=target_i,
-                tp=_LOUDNORM_TP,
-                lra=_LOUDNORM_LRA,
-                measured_I=stats["input_i"],
-                measured_TP=stats["input_tp"],
-                measured_LRA=stats["input_lra"],
-                measured_thresh=stats["input_thresh"],
-                offset=stats["target_offset"],
-                linear="true",
-                print_format="summary",
-            )
+            .filter("volume", f"{gain_db}dB")
+            .filter("alimiter", limit=limit, level="disabled", attack=2, release=50)
             .output(str(output_path), ar=44100)
             .overwrite_output()
             .run(capture_stdout=True, capture_stderr=True)
