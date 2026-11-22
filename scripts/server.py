@@ -116,6 +116,10 @@ _SLUG_LOCKS: dict[str, threading.Lock] = {}
 _SLUG_LOCKS_GUARD = threading.Lock()
 
 
+# One heavy job (download + Demucs/basic-pitch/Whisper) at a time: parallel model loads risk GPU OOM.
+_PROCESSING_LOCK = threading.Lock()
+
+
 def _lock_for_slug(slug: str) -> threading.Lock:
     with _SLUG_LOCKS_GUARD:
         return _SLUG_LOCKS.setdefault(slug, threading.Lock())
@@ -191,30 +195,30 @@ def _run_job(job: Job) -> None:
 
         on_progress("queued")
         with _lock_for_slug(slug):
-            if job.upload_path is None:
-                on_progress("downloading")
-
             if _needs_reprocessing(slug, job.separation_model):
-                with tempfile.TemporaryDirectory() as tmp_dir:
-                    if job.upload_path is not None:
-                        downloaded_path = job.upload_path
-                    else:
-                        downloaded_path, title = download_audio(
-                            job.url, Path(tmp_dir),
-                            on_progress=lambda fraction: on_progress("downloading", fraction),
+                with _PROCESSING_LOCK:  # status stays "queued" while waiting here
+                    if job.upload_path is None:
+                        on_progress("downloading")
+                    with tempfile.TemporaryDirectory() as tmp_dir:
+                        if job.upload_path is not None:
+                            downloaded_path = job.upload_path
+                        else:
+                            downloaded_path, title = download_audio(
+                                job.url, Path(tmp_dir),
+                                on_progress=lambda fraction: on_progress("downloading", fraction),
+                            )
+                        slug = slugify(title)
+                        # Re-check against the *real* (downloaded) title's slug -- probe_title's
+                        # guess and the real title can differ, and each has its own cache entry.
+                        force = is_cached(CACHE_DIR, slug) and (
+                            _cached_separation_model(CACHE_DIR / slug) != job.separation_model
                         )
-                    slug = slugify(title)
-                    # Re-check against the *real* (downloaded) title's slug -- probe_title's
-                    # guess and the real title can differ, and each has its own cache entry.
-                    force = is_cached(CACHE_DIR, slug) and (
-                        _cached_separation_model(CACHE_DIR / slug) != job.separation_model
-                    )
 
-                    process_song(
-                        downloaded_path, cache_dir=CACHE_DIR, song_id=slug, on_progress=on_progress,
-                        language=job.language, lyrics_query=title,
-                        separation_model=job.separation_model, force=force,
-                    )
+                        process_song(
+                            downloaded_path, cache_dir=CACHE_DIR, song_id=slug, on_progress=on_progress,
+                            language=job.language, lyrics_query=title,
+                            separation_model=job.separation_model, force=force,
+                        )
 
             _sync_meta_title(CACHE_DIR / slug, title)
 
