@@ -84,7 +84,7 @@ def normalize_loudness(
         (
             ffmpeg.input(str(input_path))
             .filter("volume", f"{gain_db}dB")
-            .filter("alimiter", limit=limit, level="disabled", attack=3, release=1)
+            .filter("alimiter", limit=limit, level="disabled", attack=0.1, release=1)
             .output(str(output_path), ar=44100)
             .overwrite_output()
             .run(capture_stdout=True, capture_stderr=True)
