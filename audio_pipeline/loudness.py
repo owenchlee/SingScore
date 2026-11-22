@@ -76,6 +76,7 @@ def normalize_loudness(
     # loudnorm silently falls back to dynamic mode (squashing verses vs choruses)
     # when linear gain would break the peak ceiling. Apply the plain linear gain
     # ourselves and let a limiter catch only the peaks.
+    target_i -= 0.6  # loudness tolerance: spend it on less limiting
     gain_db = target_i - float(stats["input_i"])
     # alimiter limit is linear sample peak; keep ~1 dB margin below the TP ceiling
     # for inter-sample peaks. shortcut: sample-peak limiter, not true-peak.
