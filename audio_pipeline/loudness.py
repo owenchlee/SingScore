@@ -78,9 +78,9 @@ def normalize_loudness(
     # ourselves and let a limiter catch only the peaks.
     target_i -= 0.6  # loudness tolerance: spend it on less limiting
     gain_db = target_i - float(stats["input_i"])
-    # alimiter limit is linear sample peak; keep ~1 dB margin below the TP ceiling
+    # alimiter limit is linear sample peak; keep ~0.9 dB margin below the TP ceiling
     # for inter-sample peaks. shortcut: sample-peak limiter, not true-peak.
-    limit = 10 ** ((_LOUDNORM_TP - 1.0) / 20)
+    limit = 10 ** ((_LOUDNORM_TP - 0.9) / 20)
     def render(gain: float) -> None:
         try:
             (
