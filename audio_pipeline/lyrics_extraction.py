@@ -512,7 +512,7 @@ def _snap_starts_past_silence(audio, sampling_rate: int, words: list[dict]) -> l
             quiet = 0
             while i > 0 and quiet < 3:
                 i -= 1
-                quiet = 0 if frames[i] >= max(gate, 0.3 * peak) else quiet + 1
+                quiet = 0 if frames[i] >= max(gate, 0.2 * peak) else quiet + 1
             first = i
             while first < len(frames) and frames[first] < gate:
                 first += 1
