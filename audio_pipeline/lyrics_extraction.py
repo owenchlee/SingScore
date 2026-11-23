@@ -528,7 +528,7 @@ def _extend_ends_through_sound(audio, sampling_rate: int, words: list[dict]) -> 
         start, end = word["start"], word["end"]
         limit = min(words[i + 1]["start"] if i + 1 < len(words) else end + 1.5, end + 1.5)
         peak = max((_rms(audio, sampling_rate, f, f + _SNAP_FRAME_SECONDS) for f in _frame_starts(start, end)), default=0.0)
-        gate = max(_GAP_SINGING_RMS_GATE, 0.06 * peak)
+        gate = max(_GAP_SINGING_RMS_GATE, 0.03 * peak)
         t = end
         probe, quiet = end, 0
         # tolerate short dips (3 frames) inside a held vowel; end at the last loud frame
