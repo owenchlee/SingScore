@@ -502,7 +502,7 @@ def _snap_starts_past_silence(audio, sampling_rate: int, words: list[dict]) -> l
         starts = _frame_starts(start, end)
         frames = [_rms(audio, sampling_rate, f, f + _SNAP_FRAME_SECONDS) for f in starts]
         # relative gate: background noise can sit above the absolute gate, so also require a fraction of the word's peak
-        gate = max(_GAP_SINGING_RMS_GATE, 0.25 * max(frames, default=0.0))
+        gate = max(_GAP_SINGING_RMS_GATE, 0.15 * max(frames, default=0.0))
         t = start
         if frames:
             # walk back from the loudest frame through the sound run containing it (tolerating
