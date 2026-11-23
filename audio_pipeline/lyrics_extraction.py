@@ -504,10 +504,18 @@ def _snap_starts_past_silence(audio, sampling_rate: int, words: list[dict]) -> l
         # relative gate: background noise can sit above the absolute gate, so also require a fraction of the word's peak
         gate = max(_GAP_SINGING_RMS_GATE, 0.25 * max(frames, default=0.0))
         t = start
-        for f, level in zip(starts, frames):
-            if level >= gate:
-                t = f
-                break
+        if frames:
+            # walk back from the loudest frame through the sound run containing it (tolerating
+            # short dips), so a start that swallowed an earlier word's tail jumps to this word
+            i = frames.index(max(frames))
+            quiet = 0
+            while i > 0 and quiet < 3:
+                i -= 1
+                quiet = 0 if frames[i] >= gate else quiet + 1
+            first = i
+            while first < len(frames) and frames[first] < gate:
+                first += 1
+            t = starts[min(first, len(frames) - 1)]
         snapped.append({**word, "start": round(t, 4)})
     return snapped
 
