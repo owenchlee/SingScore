@@ -531,8 +531,8 @@ def _extend_ends_through_sound(audio, sampling_rate: int, words: list[dict]) -> 
         gate = max(_GAP_SINGING_RMS_GATE, 0.03 * peak)
         t = end
         probe, quiet = end, 0
-        # tolerate short dips (3 frames) inside a held vowel; end at the last loud frame
-        while probe + _SNAP_FRAME_SECONDS <= limit and quiet < 3:
+        # tolerate short dips (6 frames) inside a held vowel; end at the last loud frame
+        while probe + _SNAP_FRAME_SECONDS <= limit and quiet < 6:
             if _rms(audio, sampling_rate, probe, probe + _SNAP_FRAME_SECONDS) >= gate:
                 quiet = 0
                 t = probe + _SNAP_FRAME_SECONDS
