@@ -489,15 +489,25 @@ def _repair_energetic_gaps(
 _SNAP_FRAME_SECONDS = 0.02
 
 
+def _frame_starts(start: float, end: float) -> list[float]:
+    return [start + i * _SNAP_FRAME_SECONDS for i in range(int((end - start) / _SNAP_FRAME_SECONDS))]
+
+
 def _snap_starts_past_silence(audio, sampling_rate: int, words: list[dict]) -> list[dict]:
     """Whisper's word starts often swallow the silence before the word; move each start forward
     to the first non-silent frame (``_GAP_SINGING_RMS_GATE``) while keeping a minimum duration."""
     snapped = []
     for word in words:
         start, end = word["start"], word["end"]
+        starts = _frame_starts(start, end)
+        frames = [_rms(audio, sampling_rate, f, f + _SNAP_FRAME_SECONDS) for f in starts]
+        # relative gate: background noise can sit above the absolute gate, so also require a fraction of the word's peak
+        gate = max(_GAP_SINGING_RMS_GATE, 0.25 * max(frames, default=0.0))
         t = start
-        while t + _SNAP_FRAME_SECONDS < end and _rms(audio, sampling_rate, t, t + _SNAP_FRAME_SECONDS) < _GAP_SINGING_RMS_GATE:
-            t += _SNAP_FRAME_SECONDS
+        for f, level in zip(starts, frames):
+            if level >= gate:
+                t = f
+                break
         snapped.append({**word, "start": round(t, 4)})
     return snapped
 
