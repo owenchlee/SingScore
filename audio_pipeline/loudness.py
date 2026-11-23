@@ -73,28 +73,38 @@ def normalize_loudness(
             raise RuntimeError(f"ffmpeg failed to resample {input_path}: {stderr_text}") from exc
         return output_path
 
-    try:
-        (
-            ffmpeg.input(str(input_path))
-            .filter(
-                "loudnorm",
-                i=target_i,
-                tp=_LOUDNORM_TP,
-                lra=_LOUDNORM_LRA,
-                measured_I=stats["input_i"],
-                measured_TP=stats["input_tp"],
-                measured_LRA=stats["input_lra"],
-                measured_thresh=stats["input_thresh"],
-                offset=stats["target_offset"],
-                linear="true",
-                print_format="summary",
+    # loudnorm silently falls back to dynamic mode (squashing verses vs choruses)
+    # when linear gain would break the peak ceiling. Apply the plain linear gain
+    # ourselves and let a limiter catch only the peaks.
+    target_i -= 0.7  # loudness tolerance: spend it on less limiting
+    gain_db = target_i - float(stats["input_i"])
+    # alimiter limit is linear sample peak; keep ~0.9 dB margin below the TP ceiling
+    # for inter-sample peaks. shortcut: sample-peak limiter, not true-peak.
+    limit = 10 ** ((_LOUDNORM_TP - 0.9) / 20)
+    def render(gain: float) -> None:
+        try:
+            (
+                ffmpeg.input(str(input_path))
+                .filter("volume", f"{gain}dB")
+                .filter("alimiter", limit=limit, level="disabled", attack=0.1, release=1)
+                .output(str(output_path), ar=44100)
+                .overwrite_output()
+                .run(capture_stdout=True, capture_stderr=True)
             )
-            .output(str(output_path), ar=44100)
-            .overwrite_output()
-            .run(capture_stdout=True, capture_stderr=True)
-        )
-    except ffmpeg.Error as exc:
-        stderr_text = exc.stderr.decode(errors="replace") if exc.stderr else ""
-        raise RuntimeError(f"ffmpeg failed to normalize loudness of {input_path}: {stderr_text}") from exc
+        except ffmpeg.Error as exc:
+            stderr_text = exc.stderr.decode(errors="replace") if exc.stderr else ""
+            raise RuntimeError(f"ffmpeg failed to normalize loudness of {input_path}: {stderr_text}") from exc
+
+    render(gain_db)
+    # The limiter shaves loudness off peaky material; add the shortfall back (twice at most).
+    for _ in range(2):
+        try:
+            shortfall = target_i - float(measure_loudness(output_path, target_i)["input_i"])
+        except (RuntimeError, TypeError, ValueError):
+            break
+        if not 0.1 < shortfall < 3.0:
+            break
+        gain_db += shortfall
+        render(gain_db)
 
     return output_path
