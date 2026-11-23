@@ -540,6 +540,8 @@ def _extend_ends_through_sound(audio, sampling_rate: int, words: list[dict]) -> 
             else:
                 quiet += 1
             probe += _SNAP_FRAME_SECONDS
+        # the last frame above the gate still sits before the audible decay; pad a little, never past the limit
+        t = min(t + 0.04, max(limit, t))
         out.append({**word, "end": round(t, 4)})
     return out
 
