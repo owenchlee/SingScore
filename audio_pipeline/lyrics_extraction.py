@@ -508,7 +508,7 @@ def _snap_starts_past_silence(audio, sampling_rate: int, words: list[dict]) -> l
             # walk back from the loudest frame through the sound run containing it (tolerating
             # short dips), so a start that swallowed an earlier word's tail jumps to this word
             peak = max(frames)
-            i = max(j for j, v in enumerate(frames) if v >= 0.4 * peak)
+            i = max(j for j, v in enumerate(frames) if v >= 0.04 * peak)
             quiet = 0
             while i > 0 and quiet < 3:
                 i -= 1
