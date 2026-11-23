@@ -486,6 +486,22 @@ def _repair_energetic_gaps(
     return repaired
 
 
+_SNAP_FRAME_SECONDS = 0.02
+
+
+def _snap_starts_past_silence(audio, sampling_rate: int, words: list[dict]) -> list[dict]:
+    """Whisper's word starts often swallow the silence before the word; move each start forward
+    to the first non-silent frame (``_GAP_SINGING_RMS_GATE``) while keeping a minimum duration."""
+    snapped = []
+    for word in words:
+        start, end = word["start"], word["end"]
+        t = start
+        while t + _SNAP_FRAME_SECONDS < end and _rms(audio, sampling_rate, t, t + _SNAP_FRAME_SECONDS) < _GAP_SINGING_RMS_GATE:
+            t += _SNAP_FRAME_SECONDS
+        snapped.append({**word, "start": round(t, 4)})
+    return snapped
+
+
 def _find_overlong_word_runs(words: list[dict]) -> list[tuple[int, int]]:
     """Return ``(start_idx, end_idx)`` index ranges (inclusive) of maximal runs of consecutive
     ``words`` whose own force-aligned duration exceeds ``_MAX_PLAUSIBLE_WORD_DURATION_SECONDS``.
@@ -748,6 +764,7 @@ def extract_lyrics(
         words = _repair_energetic_gaps(
             model, audio, sampling_rate, language, words, hotwords=hotwords
         )
+        words = _snap_starts_past_silence(audio, sampling_rate, words)
         if on_progress:
             on_progress(1.0)
 
