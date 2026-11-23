@@ -512,6 +512,22 @@ def _snap_starts_past_silence(audio, sampling_rate: int, words: list[dict]) -> l
     return snapped
 
 
+def _extend_ends_through_sound(audio, sampling_rate: int, words: list[dict]) -> list[dict]:
+    """Whisper's word ends run early (held vowels); extend each end while the stem stays
+    non-silent, stopping at the next word's start (or a 1.5 s cap)."""
+    out = []
+    for i, word in enumerate(words):
+        start, end = word["start"], word["end"]
+        limit = min(words[i + 1]["start"] if i + 1 < len(words) else end + 1.5, end + 1.5)
+        peak = max((_rms(audio, sampling_rate, f, f + _SNAP_FRAME_SECONDS) for f in _frame_starts(start, end)), default=0.0)
+        gate = max(_GAP_SINGING_RMS_GATE, 0.25 * peak)
+        t = end
+        while t + _SNAP_FRAME_SECONDS <= limit and _rms(audio, sampling_rate, t, t + _SNAP_FRAME_SECONDS) >= gate:
+            t += _SNAP_FRAME_SECONDS
+        out.append({**word, "end": round(t, 4)})
+    return out
+
+
 def _find_overlong_word_runs(words: list[dict]) -> list[tuple[int, int]]:
     """Return ``(start_idx, end_idx)`` index ranges (inclusive) of maximal runs of consecutive
     ``words`` whose own force-aligned duration exceeds ``_MAX_PLAUSIBLE_WORD_DURATION_SECONDS``.
@@ -775,6 +791,7 @@ def extract_lyrics(
             model, audio, sampling_rate, language, words, hotwords=hotwords
         )
         words = _snap_starts_past_silence(audio, sampling_rate, words)
+        words = _extend_ends_through_sound(audio, sampling_rate, words)
         if on_progress:
             on_progress(1.0)
 
