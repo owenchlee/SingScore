@@ -486,6 +486,66 @@ def _repair_energetic_gaps(
     return repaired
 
 
+_SNAP_FRAME_SECONDS = 0.02
+
+
+def _frame_starts(start: float, end: float) -> list[float]:
+    return [start + i * _SNAP_FRAME_SECONDS for i in range(int((end - start) / _SNAP_FRAME_SECONDS))]
+
+
+def _snap_starts_past_silence(audio, sampling_rate: int, words: list[dict]) -> list[dict]:
+    """Whisper's word starts often swallow the silence before the word; move each start forward
+    to the first non-silent frame (``_GAP_SINGING_RMS_GATE``) while keeping a minimum duration."""
+    snapped = []
+    for word in words:
+        start, end = word["start"], word["end"]
+        starts = _frame_starts(start, end)
+        frames = [_rms(audio, sampling_rate, f, f + _SNAP_FRAME_SECONDS) for f in starts]
+        # relative gate: background noise can sit above the absolute gate, so also require a fraction of the word's peak
+        gate = max(_GAP_SINGING_RMS_GATE, 0.15 * max(frames, default=0.0))
+        t = start
+        if frames:
+            # walk back from the loudest frame through the sound run containing it (tolerating
+            # short dips), so a start that swallowed an earlier word's tail jumps to this word
+            peak = max(frames)
+            i = max(j for j, v in enumerate(frames) if v >= 0.04 * peak)
+            quiet = 0
+            while i > 0 and quiet < 3:
+                i -= 1
+                quiet = 0 if frames[i] >= max(gate, 0.2 * peak) else quiet + 1
+            first = i
+            while first < len(frames) and frames[first] < gate:
+                first += 1
+            t = starts[min(first, len(frames) - 1)]
+        snapped.append({**word, "start": round(t, 4)})
+    return snapped
+
+
+def _extend_ends_through_sound(audio, sampling_rate: int, words: list[dict]) -> list[dict]:
+    """Whisper's word ends run early (held vowels); extend each end while the stem stays
+    non-silent, stopping at the next word's start (or a 1.5 s cap)."""
+    out = []
+    for i, word in enumerate(words):
+        start, end = word["start"], word["end"]
+        limit = min(words[i + 1]["start"] if i + 1 < len(words) else end + 1.5, end + 1.5)
+        peak = max((_rms(audio, sampling_rate, f, f + _SNAP_FRAME_SECONDS) for f in _frame_starts(start, end)), default=0.0)
+        gate = max(_GAP_SINGING_RMS_GATE, 0.03 * peak)
+        t = end
+        probe, quiet = end, 0
+        # tolerate short dips (10 frames) inside a held vowel; end at the last loud frame
+        while probe + _SNAP_FRAME_SECONDS <= limit and quiet < 10:
+            if _rms(audio, sampling_rate, probe, probe + _SNAP_FRAME_SECONDS) >= gate:
+                quiet = 0
+                t = probe + _SNAP_FRAME_SECONDS
+            else:
+                quiet += 1
+            probe += _SNAP_FRAME_SECONDS
+        # the last frame above the gate still sits before the audible decay; pad a little, never past the limit
+        t = min(t + 0.04, max(limit, t))
+        out.append({**word, "end": round(t, 4)})
+    return out
+
+
 def _find_overlong_word_runs(words: list[dict]) -> list[tuple[int, int]]:
     """Return ``(start_idx, end_idx)`` index ranges (inclusive) of maximal runs of consecutive
     ``words`` whose own force-aligned duration exceeds ``_MAX_PLAUSIBLE_WORD_DURATION_SECONDS``.
@@ -748,6 +808,8 @@ def extract_lyrics(
         words = _repair_energetic_gaps(
             model, audio, sampling_rate, language, words, hotwords=hotwords
         )
+        words = _snap_starts_past_silence(audio, sampling_rate, words)
+        words = _extend_ends_through_sound(audio, sampling_rate, words)
         if on_progress:
             on_progress(1.0)
 
